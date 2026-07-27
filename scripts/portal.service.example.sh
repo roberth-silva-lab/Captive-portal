@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+
 cd /opt/portal
 docker compose up -d

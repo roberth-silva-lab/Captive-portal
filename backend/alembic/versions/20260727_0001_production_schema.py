@@ -7,16 +7,17 @@ Create Date: 2026-07-27
 from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 revision: str = "20260727_0001"
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-admin_role = sa.Enum("SUPERADMIN", "ADMIN", "VIEWER", name="adminrole")
-session_status = sa.Enum("PENDING", "AUTHORIZED", "EXPIRED", "DISCONNECTED", "BLOCKED", "ANONYMIZED", name="sessionstatus")
-auth_method = sa.Enum("VOUCHER", "CPF", "EMAIL", "PROVISIONAL", name="authorizationmethod")
-notification_type = sa.Enum("INFO", "WARNING", "MAINTENANCE", "CRITICAL", name="notificationtype")
+admin_role = postgresql.ENUM("SUPERADMIN", "ADMIN", "VIEWER", name="adminrole", create_type=False)
+session_status = postgresql.ENUM("PENDING", "AUTHORIZED", "EXPIRED", "DISCONNECTED", "BLOCKED", "ANONYMIZED", name="sessionstatus", create_type=False)
+auth_method = postgresql.ENUM("VOUCHER", "CPF", "EMAIL", "PROVISIONAL", name="authorizationmethod", create_type=False)
+notification_type = postgresql.ENUM("INFO", "WARNING", "MAINTENANCE", "CRITICAL", name="notificationtype", create_type=False)
 
 
 def upgrade() -> None:
