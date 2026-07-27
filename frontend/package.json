@@ -1,0 +1,31 @@
+{
+  "name": "captive-portal-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "lint": "eslint src --ext .ts,.tsx",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "6.0.3",
+    "vite": "8.1.3",
+    "typescript": "6.0.2",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "lucide-react": "0.575.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "eslint": "10.6.0",
+    "typescript-eslint": "8.62.0",
+    "vitest": "4.1.0",
+    "jsdom": "28.1.0"
+  }
+}

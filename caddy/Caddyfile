@@ -1,0 +1,36 @@
+﻿{
+  email admin@gabineteitinerante.com.br
+  auto_https on
+}
+
+(security_headers) {
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy strict-origin-when-cross-origin
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'self'"
+  }
+}
+
+portal.gabineteitinerante.com.br {
+  import security_headers
+  handle /api/* {
+    reverse_proxy backend:8000
+  }
+  handle /health/* {
+    reverse_proxy backend:8000
+  }
+  reverse_proxy frontend:8080
+}
+
+portal-system.gabineteitinerante.com.br {
+  import security_headers
+  handle /api/* {
+    reverse_proxy backend:8000
+  }
+  handle /health/* {
+    reverse_proxy backend:8000
+  }
+  redir / /admin/login 302
+  reverse_proxy frontend:8080
+}

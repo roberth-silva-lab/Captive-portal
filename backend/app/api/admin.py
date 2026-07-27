@@ -1,0 +1,305 @@
+import json
+from datetime import timedelta
+from typing import Any
+
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session
+
+from app.api.deps import client_ip, current_admin, require_csrf, require_role
+from app.core.config import get_settings
+from app.core.database import get_db
+from app.models import (
+    AdminRole,
+    AdminSession,
+    AdminUser,
+    AuditLog,
+    AuthAttempt,
+    GuestSession,
+    MaintenanceConfig,
+    PortalNotification,
+    SessionStatus,
+    SiteProfile,
+    Voucher,
+)
+from app.models.entities import utcnow
+from app.schemas.admin import (
+    AdminLoginRequest,
+    AdminMe,
+    DashboardSummary,
+    MaintenanceAdminResponse,
+    MaintenanceUpdateRequest,
+    NotificationAdminResponse,
+    NotificationCreateRequest,
+    NotificationUpdateRequest,
+    SiteNode,
+    VoucherCreateRequest,
+    VoucherResponse,
+)
+from app.security.passwords import verify_password
+from app.security.tokens import random_token_urlsafe, secret_hash
+from app.services.rate_limit import enforce_rate_limit, record_attempt
+from app.services.sessions import dashboard_counts, expire_due_sessions
+
+router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+def admin_out(admin: AdminUser) -> AdminMe:
+    return AdminMe(id=admin.id, email=admin.email, name=admin.name, role=admin.role)
+
+
+def audit(db: Session, admin: AdminUser, event: str, target_type: str, target_id: str, metadata: dict[str, Any] | None = None) -> None:
+    db.add(AuditLog(actor_id=admin.id, event=event, target_type=target_type, target_id=target_id, metadata_json=json.dumps(metadata or {}, separators=(",", ":"))))
+
+
+def _json_dict(raw: str) -> dict[str, Any]:
+    try:
+        value = json.loads(raw or "{}")
+        return value if isinstance(value, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def _maintenance_state(row: MaintenanceConfig | None) -> MaintenanceAdminResponse:
+    now = utcnow()
+    if (row and row.start_at and row.start_at.tzinfo is None) or (row and row.end_at and row.end_at.tzinfo is None):
+        now = now.replace(tzinfo=None)
+    if not row:
+        return MaintenanceAdminResponse(maintenanceEnabled=False, maintenanceActive=False, maintenanceScheduled=False, maintenanceTitle="Portal em manutencao", maintenanceMessage="Estamos realizando ajustes para melhorar o acesso.")
+    started = row.start_at is None or row.start_at <= now
+    not_ended = row.end_at is None or row.end_at > now
+    return MaintenanceAdminResponse(
+        maintenanceEnabled=row.enabled,
+        maintenanceActive=row.enabled and started and not_ended,
+        maintenanceScheduled=row.enabled and row.start_at is not None and row.start_at > now,
+        maintenanceTitle=row.title,
+        maintenanceMessage=row.message,
+        maintenanceStartAt=row.start_at,
+        maintenanceEndAt=row.end_at,
+        maintenanceImageUrl=row.image_url,
+        maintenanceVisualConfig=_json_dict(row.visual_config_json),
+        updatedAt=row.updated_at,
+    )
+
+
+def _notification_out(row: PortalNotification) -> NotificationAdminResponse:
+    return NotificationAdminResponse(id=row.id, type=row.type, title=row.title, message=row.message, startsAt=row.starts_at, endsAt=row.ends_at, site=row.site, enabled=row.enabled, createdAt=row.created_at, updatedAt=row.updated_at)
+
+
+def _voucher_out(voucher: Voucher) -> VoucherResponse:
+    return VoucherResponse(
+        id=voucher.id,
+        codeLabel=voucher.code_label,
+        durationMinutes=voucher.duration_minutes,
+        timeLimitMinutes=voucher.time_limit_minutes,
+        dataLimitMb=voucher.data_limit_mb,
+        downloadLimit=voucher.download_limit,
+        uploadLimit=voucher.upload_limit,
+        deviceLimit=voucher.device_limit,
+        maxDevices=voucher.max_devices,
+        site=voucher.site,
+        enabled=voucher.is_active,
+        expiresAt=voucher.expires_at,
+        usedCount=voucher.used_count,
+        isActive=voucher.is_active,
+        createdAt=voucher.created_at,
+    )
+
+
+@router.post("/login", response_model=AdminMe)
+def login(payload: AdminLoginRequest, response: Response, request: Request, db: Session = Depends(get_db)):
+    ip = client_ip(request)
+    enforce_rate_limit(db, payload.email, ip, "admin-login", max_attempts=5)
+    admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower(), AdminUser.is_active.is_(True)))
+    if not admin or not verify_password(payload.password, admin.password_hash):
+        record_attempt(db, payload.email, ip, "admin-login", False, "invalid_credentials")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Credenciais invalidas.")
+    settings = get_settings()
+    raw_session = random_token_urlsafe()
+    raw_csrf = random_token_urlsafe()
+    db.add(AdminSession(id=secret_hash(raw_session), admin_id=admin.id, csrf_hash=secret_hash(raw_csrf), expires_at=utcnow() + timedelta(minutes=settings.admin_session_minutes)))
+    db.commit()
+    secure = settings.is_production
+    response.set_cookie(settings.session_cookie_name, raw_session, httponly=True, secure=secure, samesite="lax", max_age=settings.admin_session_minutes * 60)
+    response.set_cookie(settings.csrf_cookie_name, raw_csrf, httponly=False, secure=secure, samesite="lax", max_age=settings.admin_session_minutes * 60)
+    record_attempt(db, payload.email, ip, "admin-login", True)
+    return admin_out(admin)
+
+
+@router.post("/logout", dependencies=[Depends(require_csrf)])
+def logout(response: Response, db: Session = Depends(get_db), admin: AdminUser = Depends(current_admin), session_cookie: str | None = Cookie(default=None, alias=get_settings().session_cookie_name)):
+    settings = get_settings()
+    if session_cookie:
+        session = db.get(AdminSession, secret_hash(session_cookie))
+        if session and session.admin_id == admin.id:
+            session.revoked_at = utcnow()
+            db.commit()
+    response.delete_cookie(settings.session_cookie_name)
+    response.delete_cookie(settings.csrf_cookie_name)
+    return {"ok": True}
+
+
+@router.get("/me", response_model=AdminMe)
+def me(admin: AdminUser = Depends(current_admin)):
+    return admin_out(admin)
+
+
+@router.get("/dashboard", response_model=DashboardSummary)
+def dashboard(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    expire_due_sessions(db)
+    now = utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    counts = dashboard_counts(db)
+    auth_attempts = db.execute(select(func.count(AuthAttempt.id))).scalar_one()
+    auth_failures = db.execute(select(func.count(AuthAttempt.id)).where(AuthAttempt.success.is_(False))).scalar_one()
+    vouchers_used = db.execute(select(func.coalesce(func.sum(Voucher.used_count), 0))).scalar_one()
+    vouchers_available = db.execute(select(func.count(Voucher.id)).where(Voucher.is_active.is_(True), or_(Voucher.expires_at.is_(None), Voucher.expires_at > now))).scalar_one()
+    expiring_30 = db.execute(select(func.count(GuestSession.id)).where(GuestSession.status == SessionStatus.AUTHORIZED, GuestSession.expires_at > now, GuestSession.expires_at <= now + timedelta(minutes=30))).scalar_one()
+    expiring_10 = db.execute(select(func.count(GuestSession.id)).where(GuestSession.status == SessionStatus.AUTHORIZED, GuestSession.expires_at > now, GuestSession.expires_at <= now + timedelta(minutes=10))).scalar_one()
+    scheduled_maint = db.execute(select(func.count(MaintenanceConfig.id)).where(MaintenanceConfig.enabled.is_(True), MaintenanceConfig.start_at > now)).scalar_one()
+    active_notices = db.execute(select(func.count(PortalNotification.id)).where(PortalNotification.enabled.is_(True), or_(PortalNotification.starts_at.is_(None), PortalNotification.starts_at <= now), or_(PortalNotification.ends_at.is_(None), PortalNotification.ends_at > now))).scalar_one()
+    ended_today = db.execute(select(func.count(GuestSession.id)).where(or_(GuestSession.disconnected_at >= today_start, GuestSession.expires_at >= today_start), GuestSession.status.in_([SessionStatus.DISCONNECTED, SessionStatus.EXPIRED]))).scalar_one()
+    average_session = counts["averageDurationSeconds"]
+    return DashboardSummary(
+        **counts,
+        vouchersUsed=vouchers_used,
+        vouchersAvailable=vouchers_available,
+        authAttempts=auth_attempts,
+        authFailures=auth_failures,
+        onlineUsers=counts["connectedNow"],
+        expiringIn30Minutes=expiring_30,
+        expiringIn10Minutes=expiring_10,
+        scheduledMaintenances=scheduled_maint,
+        activeNotifications=active_notices,
+        sessionsEndedToday=ended_today,
+        averageSessionSeconds=average_session,
+    )
+
+
+@router.get("/sites", response_model=list[SiteNode])
+def sites(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    configured = db.scalars(select(SiteProfile).order_by(SiteProfile.name)).all()
+    if not configured:
+        configured = [SiteProfile(name=name, slug=name.lower(), status="planned") for name in ["Sede", "Esdras", "DMA", "Default"]]
+    rows = []
+    for site in configured:
+        sessions = db.execute(select(func.count(GuestSession.id)).where(GuestSession.site == site.name)).scalar_one()
+        connected = db.execute(select(func.count(GuestSession.id)).where(GuestSession.site == site.name, GuestSession.status == SessionStatus.AUTHORIZED)).scalar_one()
+        aps = db.execute(select(func.count(func.distinct(GuestSession.ap_mac))).where(GuestSession.site == site.name)).scalar_one()
+        rows.append(SiteNode(name=site.name, status=site.status, aps=aps, connectedClients=connected, sessions=sessions))
+    return rows
+
+
+@router.post("/vouchers", response_model=VoucherResponse, dependencies=[Depends(require_csrf)])
+def create_voucher(payload: VoucherCreateRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    code = payload.code.strip().upper()
+    max_devices = payload.maxDevices or payload.deviceLimit
+    voucher = Voucher(
+        code_hash=secret_hash(code),
+        code_label=f"{code[:3]}***",
+        duration_minutes=payload.durationMinutes,
+        time_limit_minutes=payload.timeLimitMinutes,
+        data_limit_mb=payload.dataLimitMb,
+        download_limit=payload.downloadLimit,
+        upload_limit=payload.uploadLimit,
+        device_limit=payload.deviceLimit,
+        max_devices=max_devices,
+        site=payload.site,
+        expires_at=payload.expiresAt,
+        is_active=payload.enabled,
+    )
+    db.add(voucher)
+    audit(db, admin, "voucher.created", "voucher", voucher.id, {"site": payload.site, "advancedLimitsStoredOnly": True})
+    db.commit()
+    db.refresh(voucher)
+    return _voucher_out(voucher)
+
+
+@router.get("/vouchers", response_model=list[VoucherResponse])
+def list_vouchers(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    rows = db.scalars(select(Voucher).order_by(Voucher.created_at.desc())).all()
+    return [_voucher_out(v) for v in rows]
+
+
+@router.get("/maintenance", response_model=MaintenanceAdminResponse)
+def get_maintenance(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    return _maintenance_state(db.get(MaintenanceConfig, "global"))
+
+
+@router.put("/maintenance", response_model=MaintenanceAdminResponse, dependencies=[Depends(require_csrf)])
+def update_maintenance(payload: MaintenanceUpdateRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    row = db.get(MaintenanceConfig, "global")
+    before = _maintenance_state(row).model_dump(mode="json") if row else {}
+    if not row:
+        row = MaintenanceConfig(id="global")
+        db.add(row)
+    row.enabled = payload.maintenanceEnabled
+    row.title = payload.maintenanceTitle
+    row.message = payload.maintenanceMessage
+    row.start_at = payload.maintenanceStartAt
+    row.end_at = payload.maintenanceEndAt
+    row.image_url = payload.maintenanceImageUrl
+    row.visual_config_json = json.dumps(payload.maintenanceVisualConfig, separators=(",", ":"))
+    row.updated_by = admin.id
+    row.updated_at = utcnow()
+    audit(db, admin, "maintenance.updated", "maintenance", "global", {"before": before, "after": payload.model_dump(mode="json")})
+    db.commit()
+    db.refresh(row)
+    return _maintenance_state(row)
+
+
+@router.get("/maintenance/audit")
+def maintenance_audit(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    rows = db.scalars(select(AuditLog).where(AuditLog.target_type == "maintenance").order_by(AuditLog.created_at.desc()).limit(50)).all()
+    return [{"id": row.id, "actorId": row.actor_id, "event": row.event, "createdAt": row.created_at, "targetId": row.target_id} for row in rows]
+
+
+@router.post("/notifications", response_model=NotificationAdminResponse, dependencies=[Depends(require_csrf)])
+def create_notification(payload: NotificationCreateRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    row = PortalNotification(type=payload.type, title=payload.title, message=payload.message, starts_at=payload.startsAt, ends_at=payload.endsAt, site=payload.site, enabled=payload.enabled, created_by=admin.id, updated_by=admin.id)
+    db.add(row)
+    audit(db, admin, "notification.created", "notification", row.id, {"site": payload.site, "type": payload.type.value})
+    db.commit()
+    db.refresh(row)
+    return _notification_out(row)
+
+
+@router.get("/notifications", response_model=list[NotificationAdminResponse])
+def list_notifications(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    rows = db.scalars(select(PortalNotification).order_by(PortalNotification.created_at.desc()).limit(200)).all()
+    return [_notification_out(row) for row in rows]
+
+
+@router.put("/notifications/{notification_id}", response_model=NotificationAdminResponse, dependencies=[Depends(require_csrf)])
+def update_notification(notification_id: str, payload: NotificationUpdateRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    row = db.get(PortalNotification, notification_id)
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Comunicado nao encontrado.")
+    row.type = payload.type
+    row.title = payload.title
+    row.message = payload.message
+    row.starts_at = payload.startsAt
+    row.ends_at = payload.endsAt
+    row.site = payload.site
+    row.enabled = payload.enabled
+    row.updated_by = admin.id
+    row.updated_at = utcnow()
+    audit(db, admin, "notification.updated", "notification", row.id, {"site": payload.site, "type": payload.type.value})
+    db.commit()
+    db.refresh(row)
+    return _notification_out(row)
+
+
+@router.get("/users")
+def list_users(_admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    return []
+
+
+@router.get("/access-points")
+def list_access_points(_admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    return []
+
+
+@router.get("/dashboard/charts")
+def dashboard_charts(_admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    return {"authMethods": [], "visitorsByDay": [], "connectionsByHour": [], "bandwidthByHour": [], "bandwidthAvailable": False}

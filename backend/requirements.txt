@@ -1,0 +1,7 @@
+﻿-r requirements-prod.txt
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.6.9
+mypy==1.11.2
+bandit==1.7.10
+pip-audit==2.7.3

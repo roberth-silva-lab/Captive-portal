@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Receita Federal">
+  <defs>
+    <linearGradient id="rf-blue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#1e3a8a"/>
+    </linearGradient>
+  </defs>
+  <polygon fill="url(#rf-blue)" points="60,8 108,36 92,92 28,92 12,36"/>
+  <polygon fill="#3b82f6" opacity="0.85" points="60,22 92,42 82,78 38,78 28,42"/>
+  <polygon fill="#93c5fd" opacity="0.9" points="60,34 78,46 72,68 48,68 42,46"/>
+</svg>
