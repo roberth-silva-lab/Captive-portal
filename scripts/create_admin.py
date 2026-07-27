@@ -1,4 +1,4 @@
-﻿"""Wrapper seguro para criar administrador interativamente.
+"""Wrapper seguro para criar administrador interativamente.
 
 Uso: python scripts/create_admin.py
 """

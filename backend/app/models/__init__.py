@@ -1,4 +1,4 @@
-﻿from app.models.entities import (
+from app.models.entities import (
     AdminRole,
     AdminSession,
     AdminUser,

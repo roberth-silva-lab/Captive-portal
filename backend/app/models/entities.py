@@ -1,4 +1,4 @@
-﻿import enum
+import enum
 import uuid
 from datetime import UTC, datetime
 

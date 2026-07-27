@@ -1,4 +1,4 @@
-﻿# Segurança
+# Segurança
 
 Este projeto deve ser tratado como aplicação exposta à Internet e integrada a rede Wi-Fi real. As configurações de produção precisam evitar defaults inseguros e impedir exposição direta do backend.
 

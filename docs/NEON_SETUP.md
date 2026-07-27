@@ -1,4 +1,4 @@
-﻿# Configuração Neon PostgreSQL
+# Configuração Neon PostgreSQL
 
 O banco de produção deve usar Neon PostgreSQL com papéis separados para migration e runtime.
 

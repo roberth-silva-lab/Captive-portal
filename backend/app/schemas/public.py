@@ -1,4 +1,4 @@
-﻿import re
+import re
 from datetime import datetime
 
 from pydantic import AliasChoices, BaseModel, EmailStr, Field, field_validator

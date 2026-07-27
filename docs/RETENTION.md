@@ -1,4 +1,4 @@
-﻿# Retenção e Anonimização
+# Retenção e Anonimização
 
 Este documento resume a política operacional de retenção. A versão detalhada fica em `docs/DATA_RETENTION.md`.
 

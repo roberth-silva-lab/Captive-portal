@@ -1,4 +1,4 @@
-﻿"""production schema
+"""production schema
 
 Revision ID: 20260727_0001
 Revises: 

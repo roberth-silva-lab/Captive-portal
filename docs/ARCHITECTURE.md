@@ -1,4 +1,4 @@
-﻿# Arquitetura
+# Arquitetura
 
 A aplicação roda em uma EC2 Ubuntu dedicada ao Captive Portal. O Caddy recebe o tráfego HTTPS dos dois hostnames e encaminha as requisições para os serviços internos.
 

@@ -1,4 +1,4 @@
-﻿# Captive Portal
+# Captive Portal
 
 Este repositório contém a aplicação de Captive Portal externo para redes UniFi do Gabinete Itinerante.
 

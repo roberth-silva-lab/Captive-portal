@@ -1,4 +1,4 @@
-﻿# Retenção de Dados
+# Retenção de Dados
 
 A aplicação registra somente os dados necessários para autenticação, autorização, auditoria e operação do Captive Portal.
 

@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 
 from app.integrations.unifi.client import UniFiClientRecord
 from app.models import Voucher

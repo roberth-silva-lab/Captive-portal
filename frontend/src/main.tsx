@@ -1,4 +1,4 @@
-﻿import { StrictMode, useEffect, useMemo, useState } from 'react'
+import { StrictMode, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { AlertTriangle, Bell, CheckCircle2, Clock, LogOut, Mail, ShieldCheck, Ticket, UserRound, Wifi } from 'lucide-react'
 import './styles.css'

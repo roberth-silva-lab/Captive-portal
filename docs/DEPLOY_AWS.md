@@ -1,4 +1,4 @@
-﻿# Implantação AWS
+# Implantação AWS
 
 A implantação alvo usa uma EC2 Ubuntu exclusiva para o Captive Portal. O UniFi OS Server fica em outra EC2 e o banco fica no Neon PostgreSQL.
 

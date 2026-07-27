@@ -1,4 +1,4 @@
-﻿# Integração UniFi
+# Integração UniFi
 
 A integração com o UniFi usa a UniFi Network Integration API com `X-API-Key`.
 

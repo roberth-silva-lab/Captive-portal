@@ -1,4 +1,4 @@
-﻿from datetime import timedelta
+from datetime import timedelta
 
 from app.models import AuthorizationMethod, GuestSession, MaintenanceConfig, NotificationType, PortalNotification, SessionStatus
 from app.models.entities import utcnow
