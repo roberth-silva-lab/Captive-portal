@@ -2,42 +2,42 @@
 
 Este repositório contém a aplicação de Captive Portal externo para redes UniFi do Gabinete Itinerante.
 
-O usuário da rede acessa o portal público em `https://portal.gabineteitinerante.com.br`. A administração usa `https://portal-system.gabineteitinerante.com.br`. Os dois hostnames apontam para a mesma EC2, passam pelo mesmo Caddy e compartilham o mesmo backend FastAPI.
+A solução possui uma interface pública para visitantes e uma interface administrativa separada por hostname. As duas entradas podem apontar para a mesma EC2, passam pelo mesmo proxy HTTPS e compartilham o mesmo backend FastAPI.
 
 ## Objetivo
 
-A aplicação recebe o redirecionamento do Captive Portal da UniFi, identifica o dispositivo visitante, coleta o método de autenticação necessário e só libera a navegação depois que o UniFi confirma `authorized=true` para o cliente.
+A aplicação recebe o redirecionamento do Captive Portal da UniFi, identifica o dispositivo visitante, coleta o método de autenticação necessário e libera a navegação somente depois que o UniFi confirma `authorized=true` para o cliente.
 
-O portal deve funcionar bem em Android, iPhone e computador, inclusive dentro das janelas reduzidas de captive portal abertas pelo sistema operacional.
+A experiência foi pensada para Android, iPhone e computador, incluindo as janelas reduzidas de captive portal abertas pelo sistema operacional.
 
 ## Funcionalidades
 
 - Autenticação por voucher, CPF ou email.
 - Aceite obrigatório dos termos de uso antes da autorização.
 - Autorização de visitantes pela UniFi Network Integration API.
-- Confirmação real de `authorized=true` antes de mostrar sucesso.
-- Tela final curta com botão `Continuar para Internet` como fallback.
-- Acompanhamento de sessão com horário de autorização, expiração, tempo total e tempo restante.
+- Confirmação real de `authorized=true` antes da tela de sucesso.
+- Tela final curta com fallback para continuar navegando.
+- Acompanhamento de sessão com autorização, expiração, tempo total e tempo restante.
 - Avisos internos quando a sessão estiver próxima de expirar.
 - Modo manutenção imediato ou programado.
 - Comunicados públicos por tipo e por site.
-- Painel administrativo protegido por RBAC, cookie HttpOnly e CSRF.
+- Painel administrativo com RBAC, cookie HttpOnly e CSRF.
 - Vouchers com limites de tempo, dados, velocidade, dispositivos, site, validade e status.
-- Banco Neon PostgreSQL com migrations Alembic.
-- Caddy como proxy HTTPS para os dois hostnames.
+- Banco PostgreSQL gerenciado com migrations Alembic.
+- Proxy HTTPS para separar interface pública, interface administrativa e API.
 
 ## Arquitetura
 
 ```mermaid
 flowchart TD
-  Internet --> DNS[DNS / Route 53]
-  DNS --> Public[portal.gabineteitinerante.com.br]
-  DNS --> Admin[portal-system.gabineteitinerante.com.br]
-  Public --> Caddy[Caddy HTTPS]
-  Admin --> Caddy
-  Caddy --> Frontend[Frontend React]
-  Caddy -->|/api| FastAPI[Backend FastAPI]
-  FastAPI --> Neon[(Neon PostgreSQL)]
+  Internet --> DNS[DNS]
+  DNS --> Public[Portal publico]
+  DNS --> Admin[Portal administrativo]
+  Public --> Proxy[Proxy HTTPS]
+  Admin --> Proxy
+  Proxy --> Frontend[Frontend React]
+  Proxy -->|/api| FastAPI[Backend FastAPI]
+  FastAPI --> Database[(PostgreSQL)]
   FastAPI --> UniFi[UniFi OS Server]
 ```
 
@@ -48,10 +48,10 @@ flowchart TD
   Client[Dispositivo visitante] --> WiFi[Rede Wi-Fi]
   WiFi --> AP[UniFi AP]
   AP --> UniFiOS[UniFi OS Server]
-  UniFiOS --> Redirect[Redirect com id/ap/ssid/url]
-  Redirect --> Portal[Portal publico]
+  UniFiOS --> Redirect[Redirect captive portal]
+  Redirect --> Portal[Interface publica]
   Portal --> Auth[Voucher / CPF / Email]
-  Auth --> API[FastAPI]
+  Auth --> API[Backend FastAPI]
   API --> UniFiAPI[UniFi Integration API]
   UniFiAPI --> Confirmacao[authorized=true]
   Confirmacao --> Internet[Internet liberada]
@@ -93,51 +93,40 @@ flowchart LR
 ```mermaid
 flowchart TD
   Internet --> PublicZone[Zona publica]
-  PublicZone --> Caddy
-  Caddy --> AppZone[Zona da aplicacao]
+  PublicZone --> Proxy[Proxy HTTPS]
+  Proxy --> AppZone[Zona da aplicacao]
   AppZone --> FastAPI
-  FastAPI --> Database[(Neon)]
+  FastAPI --> Database[(PostgreSQL)]
   FastAPI --> UniFi[UniFi OS]
-  Secrets[Variaveis de runtime / SSM / Secrets Manager] --> FastAPI
+  Secrets[Secrets de runtime] --> FastAPI
 ```
 
-Pontos principais:
+A autenticação administrativa usa cookies HttpOnly e proteção CSRF. Senhas são armazenadas com Argon2id. Dados como CPF, email, telefone e IP são tratados como dados pessoais e devem seguir a política de retenção definida para o projeto.
 
-- Senhas administrativas usam Argon2id.
-- Sessão administrativa usa cookie HttpOnly e Secure em produção.
-- CSRF usa cookie separado e header `X-CSRF-Token`.
-- Tokens administrativos não devem ser armazenados em `localStorage`.
-- CPF, email, telefone e IP são tratados como dados pessoais.
-- CORS deve listar apenas `https://portal.gabineteitinerante.com.br` e `https://portal-system.gabineteitinerante.com.br`.
-- Produção não deve usar SQLite, MySQL, secrets padrão ou `UNIFI_VERIFY_SSL=false`.
+Em produção, CORS deve ser explícito para os hostnames oficiais da aplicação. A aplicação também bloqueia configurações inseguras como secrets padrão, banco local de desenvolvimento e verificação SSL desativada para UniFi.
 
 ## Estrutura de Pastas
 
 - `backend/`: API FastAPI, models, schemas, serviços, integrações, Alembic e testes.
-- `frontend/`: aplicação React/Vite exibida nos hostnames público e administrativo.
-- `caddy/`: configuração Caddy para HTTPS e roteamento dos dois hostnames.
+- `frontend/`: aplicação React/Vite exibida nas interfaces pública e administrativa.
+- `caddy/`: configuração do proxy HTTPS e roteamento interno.
 - `scripts/`: scripts operacionais de migração, backup, healthcheck, deploy e criação de admin.
 - `docs/`: documentação de arquitetura, AWS, Neon, segurança, retenção e UniFi.
 - `legacy/`: referência antiga ignorada pelo Git; não faz parte do build novo.
 
 ## Configuração
 
-A aplicação usa variáveis de ambiente. O arquivo `.env.example` mostra os nomes esperados e deve continuar sem valores reais.
+A aplicação usa variáveis de ambiente para separar código e configuração. O arquivo `.env.example` documenta os nomes esperados e deve permanecer sem valores reais.
 
-Para preparar um ambiente local ou de produção:
+O arquivo `.env` real pertence ao ambiente de execução e não deve ser versionado. Em produção, os valores podem ser carregados por arquivo protegido, SSM Parameter Store ou Secrets Manager.
 
-```bash
-cp .env.example .env
-```
+## Execução
 
-Depois disso, preencher `.env` com valores reais no servidor ou carregar os valores a partir de SSM Parameter Store/Secrets Manager. O arquivo `.env` real não deve ser commitado.
+O ambiente de produção roda com Docker Compose. O proxy HTTPS publica as portas externas e os serviços internos permanecem isolados na rede da aplicação.
 
-## Execução com Docker
-
-Na EC2, o diretório recomendado é `/opt/portal`.
+Fluxo operacional esperado:
 
 ```bash
-cd /opt/portal
 docker compose build
 ./scripts/migrate.sh
 cd backend
@@ -147,7 +136,7 @@ docker compose up -d
 docker compose ps
 ```
 
-O FastAPI não fica exposto publicamente. O acesso externo acontece apenas pelas portas `80` e `443` publicadas pelo Caddy.
+O backend FastAPI não é exposto diretamente à Internet. O tráfego externo entra pelo proxy HTTPS e chega ao backend apenas pelas rotas internas de API.
 
 ## Testes
 
@@ -171,35 +160,22 @@ npm run lint
 npm audit --audit-level=high
 ```
 
-## Observações Sobre UniFi
+## Integração UniFi
 
-A aplicação usa a UniFi Network Integration API com `X-API-Key`. Para autorização de visitantes, são usados os endpoints de sites, clientes e ações de cliente.
+A integração com UniFi usa API key pela UniFi Network Integration API. O backend consulta sites e clientes, executa a ação de autorização e consulta novamente o estado do cliente antes de concluir a sessão como liberada.
 
-Os limites avançados de voucher só são enviados ao UniFi quando existem campos documentados pela API oficial:
+A autorização de visitantes envia apenas campos documentados pela API oficial, como tempo de acesso, limite de dados e limites de velocidade. Regras administrativas de voucher, como quantidade máxima de dispositivos, site, validade e status ativo, são aplicadas pelo próprio portal e registradas no banco de dados.
 
-- `timeLimitMinutes`
-- `dataUsageLimitMBytes`
-- `rxRateLimitKbps`
-- `txRateLimitKbps`
+Parâmetros não documentados não devem ser enviados ao UniFi.
 
-Regras como `max_devices`, `site`, `enabled` e `expires_at` são aplicadas pelo próprio portal e pelo banco de dados.
+## Prontidão Para Produção
 
-## Checklist Antes de Produção
+A aplicação é considerada pronta para produção quando o ambiente possui DNS, HTTPS, banco PostgreSQL, integração UniFi, secrets de runtime e painel administrativo inicial configurados fora do repositório.
 
-- DNS dos dois hostnames apontando para a EC2 do portal.
-- Caddy obtendo certificados HTTPS válidos.
-- `.env` real fora do Git.
-- `DATABASE_URL` usando usuário runtime do Neon.
-- `MIGRATION_DATABASE_URL` usando usuário owner apenas para Alembic.
-- `UNIFI_BASE_URL`, `UNIFI_API_PREFIX` e `UNIFI_API_KEY` configurados.
-- `UNIFI_VERIFY_SSL=true`.
-- Grupo de Segurança expondo somente `80/tcp`, `443/tcp` e administração restrita.
-- Admin inicial criado por `python -m app.cli create-admin`.
-- Testes backend e frontend passando.
+Também fazem parte da prontidão: backend isolado da Internet, grupo de segurança mínimo, migrations aplicadas, testes automatizados passando e validação real do fluxo captive portal em dispositivos móveis e desktop.
 
-## Solução de Problemas
+## Operação
 
-- `health/ready` degradado: verificar conexão com Neon e variáveis de ambiente.
-- Autorização UniFi falhando: verificar API key, URL, prefixo, site e se o cliente aparece no UniFi.
-- Janela captive não fecha automaticamente: isso depende do Android/iOS; o botão `Continuar para Internet` serve como fallback.
-- Erro de CORS em produção: conferir `ALLOWED_ORIGINS` com os dois hostnames HTTPS definitivos.
+Health checks indicam a disponibilidade básica da aplicação e a prontidão das dependências. Falhas de prontidão normalmente estão relacionadas a banco, variáveis de ambiente ou integração externa.
+
+A janela captive portal é controlada pelo sistema operacional do dispositivo. Depois da confirmação de acesso, o portal mostra uma tela curta de sucesso e oferece fallback manual para continuar navegando caso Android ou iOS não dispensem a janela automaticamente.
