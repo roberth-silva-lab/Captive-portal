@@ -1,6 +1,5 @@
 {
   email admin@gabineteitinerante.com.br
-  auto_https on
 }
 
 (security_headers) {
