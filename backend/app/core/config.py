@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     smtp_password: str = Field(default="", validation_alias="SMTP_PASSWORD")
     smtp_from: str = Field(default="Wi-Fi Guest <no-reply@example.com>", validation_alias="SMTP_FROM")
     smtp_timeout_seconds: float = Field(default=10.0, validation_alias="SMTP_TIMEOUT_SECONDS")
+    email_code_ttl_minutes: int = Field(default=15, validation_alias="EMAIL_CODE_TTL_MINUTES")
 
     data_retention_days: int = Field(default=90, validation_alias="DATA_RETENTION_DAYS")
     rate_limit_window_seconds: int = Field(default=3600, validation_alias="RATE_LIMIT_WINDOW_SECONDS")

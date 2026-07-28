@@ -1,4 +1,4 @@
-import { StrictMode, type ReactNode, useEffect, useMemo, useState } from 'react'
+import { StrictMode, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   Activity,
@@ -36,6 +36,7 @@ type Notice = { id: string; type: NoticeType; title: string; message: string; st
 type Maintenance = { enabled: boolean; active: boolean; scheduled: boolean; title: string; message: string; startsAt?: string | null; endsAt?: string | null; imageUrl: string; visualConfig: Record<string, unknown> }
 type PortalSettings = { networkName: string; establishmentName: string; termsText: string; maintenanceMode: boolean; maintenance: Maintenance; notifications: Notice[]; expirationWarningMinutes: number[] }
 type AuthResponse = { sessionId: string; authorized: boolean; authorizedAt: string; expiresAt: string; remainingSeconds: number; totalSeconds: number; sessionMinutes: number; nextCheckSeconds: number }
+type EmailCodeResponse = { expiresAt: string }
 type SessionStatus = { status: string; authorized: boolean; authorizedAt?: string | null; expiresAt?: string | null; serverNow: string; remainingSeconds: number; remainingMinutes: number; totalSeconds: number; warningMessage?: string | null; warningMinutes?: number | null; ssid: string; nextCheckSeconds: number }
 type Dashboard = { onlineUsers: number; expiringIn30Minutes: number; expiringIn10Minutes: number; scheduledMaintenances: number; activeNotifications: number; sessionsEndedToday: number; averageSessionSeconds: number; vouchersAvailable: number }
 type MaintenanceAdmin = { maintenanceEnabled: boolean; maintenanceActive: boolean; maintenanceScheduled: boolean; maintenanceTitle: string; maintenanceMessage: string; maintenanceStartAt?: string | null; maintenanceEndAt?: string | null; maintenanceImageUrl: string }
@@ -81,26 +82,77 @@ const portalParams = () => {
 }
 
 const formatClock = (iso?: string | null) => iso ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(iso)) : 'sem previsao'
-const formatDuration = (seconds: number) => `${Math.floor(seconds / 60)}min ${Math.max(0, seconds % 60).toString().padStart(2, '0')}s`
 const formatMinutes = (seconds: number) => `${Math.round(seconds / 60)} min`
+const formatCountdown = (seconds: number) => {
+  const safe = Math.max(0, seconds)
+  const hours = Math.floor(safe / 3600)
+  const minutes = Math.floor((safe % 3600) / 60)
+  const rest = safe % 60
+  return hours > 0 ? `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${rest.toString().padStart(2, '0')}` : `${minutes.toString().padStart(2, '0')}:${rest.toString().padStart(2, '0')}`
+}
+
+const onlyDigits = (value: string) => value.replace(/\D/g, '')
+const formatCpf = (value: string) => {
+  const digits = onlyDigits(value).slice(0, 11)
+  return digits
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d{1,2})$/, '$1-$2')
+}
+const normalizeVoucher = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 32)
+const displayVoucher = (value: string) => normalizeVoucher(value).replace(/(.{4})/g, '$1-').replace(/-$/, '')
+const validEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
+const formatPhone = (value: string) => {
+  const digits = onlyDigits(value).slice(0, 11)
+  if (digits.length <= 10) return digits.replace(/(\d{2})(\d)/, '($1) $2').replace(/(\d{4})(\d)/, '$1-$2')
+  return digits.replace(/(\d{2})(\d)/, '($1) $2').replace(/(\d{5})(\d)/, '$1-$2')
+}
+const isCpfComplete = (value: string) => onlyDigits(value).length === 11
+const portalInstitutionName = (value?: string) => {
+  const name = value?.trim()
+  if (!name || name.toLowerCase() === 'gabinete itinerante') return 'Receita Federal'
+  return name
+}
+
+const textValue = (row: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) {
+    const value = row[key]
+    if (value !== undefined && value !== null && value !== '') return String(value)
+  }
+  return ''
+}
+const boolValue = (row: Record<string, unknown>, key: string) => row[key] === true || String(row[key]).toLowerCase() === 'true'
 
 function Portal() {
   const params = useMemo(portalParams, [])
+  const codeInputRef = useRef<HTMLInputElement | null>(null)
   const [settings, setSettings] = useState<PortalSettings | null>(null)
   const [method, setMethod] = useState<Method>('voucher')
   const [identifier, setIdentifier] = useState('')
   const [name, setName] = useState('Visitante')
   const [emailCode, setEmailCode] = useState('')
+  const [phone, setPhone] = useState('')
   const [codeRequested, setCodeRequested] = useState(false)
   const [accepted, setAccepted] = useState(false)
   const [stage, setStage] = useState<Stage>('idle')
   const [message, setMessage] = useState('')
+  const [messageTone, setMessageTone] = useState<'info' | 'success' | 'error'>('info')
+  const [fieldError, setFieldError] = useState('')
+  const [emailSending, setEmailSending] = useState(false)
+  const [emailCooldown, setEmailCooldown] = useState(0)
+  const [emailExpiresAt, setEmailExpiresAt] = useState<string | null>(null)
+  const [emailRemaining, setEmailRemaining] = useState(0)
+  const [authMethodUsed, setAuthMethodUsed] = useState<Method>('voucher')
+  const [termsOpen, setTermsOpen] = useState(false)
   const [session, setSession] = useState<SessionStatus | null>(null)
 
   useEffect(() => {
     api<PortalSettings>(`/api/settings?site=${encodeURIComponent(params.site)}`)
       .then(setSettings)
-      .catch((error) => setMessage(error.message))
+      .catch((error) => {
+        setMessage(error.message)
+        setMessageTone('error')
+      })
   }, [params.site])
 
   useEffect(() => {
@@ -111,31 +163,129 @@ function Portal() {
     return () => window.clearInterval(handle)
   }, [params.clientMac, stage])
 
+  useEffect(() => {
+    if (emailCooldown <= 0) return
+    const handle = window.setTimeout(() => setEmailCooldown((value) => Math.max(0, value - 1)), 1000)
+    return () => window.clearTimeout(handle)
+  }, [emailCooldown])
+
+  useEffect(() => {
+    if (!emailExpiresAt) {
+      setEmailRemaining(0)
+      return
+    }
+    const tick = () => setEmailRemaining(Math.max(0, Math.floor((new Date(emailExpiresAt).getTime() - Date.now()) / 1000)))
+    tick()
+    const handle = window.setInterval(tick, 1000)
+    return () => window.clearInterval(handle)
+  }, [emailExpiresAt])
+
+  const institutionName = portalInstitutionName(settings?.establishmentName)
+  const networkName = settings?.networkName || 'rede de visitantes'
+  const isBusy = ['validating', 'authorizing', 'confirming', 'checking'].includes(stage)
   const basePayload = { ...params, termsAccepted: accepted }
+
+  const selectMethod = (selected: Method) => {
+    setMethod(selected)
+    setIdentifier('')
+    setEmailCode('')
+    setPhone('')
+    setCodeRequested(false)
+    setEmailExpiresAt(null)
+    setFieldError('')
+    setMessage('')
+    setStage('idle')
+  }
+
+  const updateIdentifier = (value: string) => {
+    setFieldError('')
+    if (method === 'cpf') setIdentifier(formatCpf(value))
+    else if (method === 'voucher') setIdentifier(displayVoucher(value))
+    else setIdentifier(value.trim())
+  }
+
+  const validate = () => {
+    if (!accepted) {
+      setFieldError('terms')
+      setMessage('E obrigatorio aceitar os termos de uso para continuar.')
+      setMessageTone('error')
+      return false
+    }
+    if (method === 'voucher' && normalizeVoucher(identifier).length < 3) {
+      setFieldError('identifier')
+      setMessage('Informe um voucher valido.')
+      setMessageTone('error')
+      return false
+    }
+    if (method === 'cpf' && onlyDigits(identifier).length !== 11) {
+      setFieldError('identifier')
+      setMessage('Informe um CPF completo no formato 000.000.000-00.')
+      setMessageTone('error')
+      return false
+    }
+    if (method === 'email' && !validEmail(identifier)) {
+      setFieldError('identifier')
+      setMessage('Informe um email valido.')
+      setMessageTone('error')
+      return false
+    }
+    if (method === 'email' && (!codeRequested || emailCode.length < 4)) {
+      setFieldError('code')
+      setMessage(codeRequested ? 'Informe o codigo recebido por email.' : 'Envie o codigo para seu email antes de liberar o acesso.')
+      setMessageTone('error')
+      return false
+    }
+    setFieldError('')
+    return true
+  }
 
   const requestEmailCode = async () => {
     setMessage('')
+    setFieldError('')
+    if (!accepted) {
+      setFieldError('terms')
+      setMessage('Aceite os termos de uso antes de solicitar o codigo.')
+      setMessageTone('error')
+      return
+    }
+    if (!validEmail(identifier)) {
+      setFieldError('identifier')
+      setMessage('Informe um email valido para receber o codigo.')
+      setMessageTone('error')
+      return
+    }
+    setEmailSending(true)
     try {
-      await api('/api/auth/email/request-code', { method: 'POST', body: JSON.stringify({ ...basePayload, email: identifier }) })
+      const response = await api<EmailCodeResponse>('/api/auth/email/request-code', { method: 'POST', body: JSON.stringify({ ...basePayload, email: identifier.trim() }) })
       setCodeRequested(true)
-      setMessage('Codigo enviado para o email informado.')
+      setEmailExpiresAt(response.expiresAt)
+      setEmailCooldown(30)
+      setMessage('Codigo enviado para seu email. Verifique sua caixa de entrada e spam.')
+      setMessageTone('success')
+      window.setTimeout(() => codeInputRef.current?.focus(), 80)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Nao foi possivel enviar o codigo.')
+      setMessageTone('error')
+    } finally {
+      setEmailSending(false)
     }
   }
 
   const submit = async () => {
+    if (!validate()) return
     setStage('validating')
-    setMessage('')
+    setMessage('Validando dados informados...')
+    setMessageTone('info')
     try {
       await wait(220)
       setStage('authorizing')
+      setMessage('Autorizando este dispositivo na rede...')
       const path = method === 'voucher' ? '/api/auth/voucher' : method === 'cpf' ? '/api/auth/cpf' : '/api/auth/email/verify-code'
       const body = method === 'voucher'
-        ? { ...basePayload, code: identifier }
+        ? { ...basePayload, code: normalizeVoucher(identifier) }
         : method === 'cpf'
-          ? { ...basePayload, cpf: identifier, name }
-          : { ...basePayload, email: identifier, code: emailCode }
+          ? { ...basePayload, cpf: onlyDigits(identifier), name, phone: onlyDigits(phone) || undefined }
+          : { ...basePayload, email: identifier.trim(), code: emailCode }
       const result = await api<AuthResponse>(path, { method: 'POST', body: JSON.stringify(body) })
       setStage('confirming')
       if (!result.authorized) throw new Error('O UniFi ainda nao confirmou a autorizacao.')
@@ -144,40 +294,97 @@ function Portal() {
       const current = await api<SessionStatus>(`/api/session/status?clientMac=${encodeURIComponent(params.clientMac)}`)
       if (!current.authorized) throw new Error('A sessao ainda nao aparece como autorizada.')
       setSession(current)
+      setAuthMethodUsed(method)
+      setMessage(method === 'email' ? 'Email confirmado. Liberando seu acesso...' : 'Acesso liberado com sucesso.')
+      setMessageTone('success')
       setStage('released')
     } catch (error) {
       setStage('error')
       setMessage(error instanceof Error ? error.message : 'Nao foi possivel liberar o acesso.')
+      setMessageTone('error')
     }
   }
 
+  useEffect(() => {
+    if (method === 'email' && codeRequested && emailCode.length === 6 && stage === 'idle' && !emailSending) {
+      setMessage('Verificando codigo...')
+      setMessageTone('info')
+      void submit()
+    }
+  }, [codeRequested, emailCode, emailSending, method, stage])
+
   if (settings?.maintenance.active) return <MaintenanceScreen settings={settings} />
 
-  if (stage === 'released') return <SuccessScreen session={session} redirectUrl={params.redirectUrl} notices={settings?.notifications ?? []} />
+  if (stage === 'released') return <SuccessScreen session={session} redirectUrl={params.redirectUrl} notices={settings?.notifications ?? []} method={authMethodUsed} networkName={networkName} />
 
   return (
-    <main className="portal-shell">
-      <section className="panel portal-card">
-        <div className="brand"><Wifi aria-hidden="true" /><span>{settings?.establishmentName ?? 'Portal Wi-Fi'}</span></div>
-        <h1>Acesso Wi-Fi</h1>
-        <p className="muted">Conecte este dispositivo de forma segura na rede {settings?.networkName ?? 'visitante'}.</p>
-        <NoticeList notices={settings?.notifications ?? []} />
-        <div className="tabs" role="tablist" aria-label="Metodo de acesso">
-          <button className={method === 'voucher' ? 'active' : ''} onClick={() => setMethod('voucher')} type="button"><Ticket /> Voucher</button>
-          <button className={method === 'cpf' ? 'active' : ''} onClick={() => setMethod('cpf')} type="button"><UserRound /> CPF</button>
-          <button className={method === 'email' ? 'active' : ''} onClick={() => setMethod('email')} type="button"><Mail /> Email</button>
+    <main className="portal-shell public-portal-shell">
+      <section className="panel portal-card public-portal-card" aria-labelledby="portal-title">
+        <header className="portal-brand">
+          <div className="portal-brand-mark" aria-hidden="true"><ShieldCheck /></div>
+          <div>
+            <span className="portal-eyebrow">Portal de Acesso Wi-Fi</span>
+            <strong>{institutionName}</strong>
+            <p>Acesso seguro para visitantes</p>
+          </div>
+        </header>
+
+        <div className="portal-heading">
+          <h1 id="portal-title">Acesso Wi-Fi</h1>
+          <p>Conecte este dispositivo com seguranca a {networkName}.</p>
         </div>
-        {method === 'cpf' ? <label>Nome<input value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" /></label> : null}
-        <label>{method === 'voucher' ? 'Codigo do voucher' : method === 'cpf' ? 'CPF' : 'Email'}<input value={identifier} onChange={(event) => setIdentifier(event.target.value)} inputMode={method === 'cpf' ? 'numeric' : 'text'} autoComplete={method === 'email' ? 'email' : 'off'} /></label>
-        {method === 'email' ? <div className="inline-action"><button type="button" onClick={requestEmailCode} disabled={!identifier || !accepted}>Enviar codigo</button><input placeholder="Codigo" value={emailCode} onChange={(event) => setEmailCode(event.target.value)} inputMode="numeric" /></div> : null}
-        <label className="check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} /> Aceito os termos de uso da rede.</label>
-        <button className="primary" type="button" disabled={!identifier || !accepted || stage === 'authorizing' || stage === 'checking' || (method === 'email' && (!codeRequested || !emailCode))} onClick={submit}>
-          <ShieldCheck /> {stage === 'idle' || stage === 'error' ? 'Liberar acesso' : 'Processando'}
-        </button>
+
+        <NoticeList notices={settings?.notifications ?? []} />
+
+        <div className="method-tabs" role="tablist" aria-label="Metodo de acesso">
+          <button className={method === 'voucher' ? 'active' : ''} onClick={() => selectMethod('voucher')} type="button"><Ticket /><span>Voucher</span></button>
+          <button className={method === 'cpf' ? 'active' : ''} onClick={() => selectMethod('cpf')} type="button"><UserRound /><span>CPF</span></button>
+          <button className={method === 'email' ? 'active' : ''} onClick={() => selectMethod('email')} type="button"><Mail /><span>Email</span></button>
+        </div>
+
+        <div className="form-stack">
+          {method === 'cpf' ? <>
+            <label className="field-label" htmlFor="visitor-name"><span>Nome completo</span><input id="visitor-name" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" placeholder="Seu nome completo" /></label>
+            <label className="field-label" htmlFor="visitor-phone"><span>Telefone opcional</span><input id="visitor-phone" value={phone} onChange={(event) => setPhone(formatPhone(event.target.value))} inputMode="tel" autoComplete="tel" placeholder="(00) 00000-0000" /></label>
+          </> : null}
+
+          <label className="field-label" htmlFor="portal-identifier">
+            <span>{method === 'voucher' ? 'Voucher' : method === 'cpf' ? 'CPF' : 'Email'}</span>
+            <input
+              id="portal-identifier"
+              className={fieldError === 'identifier' ? 'input-error' : method === 'cpf' && identifier ? isCpfComplete(identifier) ? 'input-valid' : 'input-pending' : method === 'voucher' && identifier ? 'voucher-input' : ''}
+              value={identifier}
+              onChange={(event) => updateIdentifier(event.target.value)}
+              inputMode={method === 'cpf' ? 'numeric' : method === 'email' ? 'email' : 'text'}
+              autoComplete={method === 'email' ? 'email' : 'off'}
+              placeholder={method === 'voucher' ? 'Digite seu voucher' : method === 'cpf' ? '000.000.000-00' : 'seu.email@exemplo.gov.br'}
+            />
+            <small className="field-help">{method === 'voucher' ? 'Informe o codigo fornecido pela administracao.' : method === 'cpf' ? 'Digite apenas os numeros; a mascara sera aplicada automaticamente.' : 'Use um email ao qual voce tenha acesso agora.'}</small>
+          </label>
+
+          {method === 'email' ? <div className="email-code-panel email-code-flow">
+            <button type="button" onClick={requestEmailCode} disabled={emailSending || emailCooldown > 0 || isBusy}>{emailSending ? 'Enviando codigo...' : emailCooldown > 0 ? `Reenviar codigo em ${formatCountdown(emailCooldown)}` : codeRequested ? 'Reenviar codigo' : 'Enviar codigo'}</button>
+            {codeRequested ? <div className="email-sent-card"><CheckCircle2 /><div><strong>Codigo enviado</strong><p>Enviamos um codigo de 6 digitos para:<br />{identifier.trim()}</p><small>Expira em {formatCountdown(emailRemaining)}. Verifique tambem sua pasta de spam.</small></div></div> : null}
+            <label className="field-label compact code-field" htmlFor="email-code"><span>Codigo recebido</span><input ref={codeInputRef} id="email-code" className={fieldError === 'code' ? 'code-input input-error highlight' : emailCode ? 'code-input highlight' : 'code-input'} placeholder="000000" value={emailCode} onChange={(event) => { setFieldError(''); setStage('idle'); setEmailCode(onlyDigits(event.target.value).slice(0, 6)) }} inputMode="numeric" autoComplete="one-time-code" /><div className="otp-slots" aria-hidden="true">{Array.from({ length: 6 }).map((_, index) => <span key={index} className={emailCode[index] ? 'filled' : ''}>{emailCode[index] ?? ''}</span>)}</div></label>
+          </div> : null}
+
+          <div className={`terms-row ${fieldError === 'terms' ? 'terms-error' : ''}`}>
+            <label className="check"><input type="checkbox" checked={accepted} onChange={(event) => { setAccepted(event.target.checked); setFieldError('') }} /> Li e aceito os <button className="terms-inline-link" type="button" onClick={(event) => { event.preventDefault(); setTermsOpen(true) }}>Termos de Uso</button>.</label>
+          </div>
+
+          <button className="primary portal-primary" type="button" disabled={isBusy || !identifier || (method === 'email' && (!codeRequested || !emailCode))} onClick={submit}>
+            <ShieldCheck /> {isBusy ? 'Liberando acesso...' : 'Liberar acesso'}
+          </button>
+        </div>
+
         <StageList stage={stage} />
-        {message ? <p className={stage === 'error' ? 'error' : 'success'}>{message}</p> : null}
-        {params.ssid ? <p className="meta">Rede: {params.ssid}</p> : null}
+        {message ? <p className={`feedback ${messageTone}`} role="status">{message}</p> : null}
+        <div className="portal-footer-info">
+          <span className="network-chip"><Wifi /> {params.ssid || networkName}</span>
+          <small>Ambiente institucional protegido</small>
+        </div>
       </section>
+      {termsOpen ? <TermsModal text={settings?.termsText} onClose={() => setTermsOpen(false)} onAccept={() => { setAccepted(true); setFieldError(''); setTermsOpen(false) }} /> : null}
     </main>
   )
 }
@@ -192,6 +399,21 @@ function NoticeList({ notices }: { notices: Notice[] }) {
   return <div className="notices">{notices.map((notice) => <article key={notice.id} className={`notice ${notice.type.toLowerCase()}`}><Bell /><div><strong>{notice.title}</strong><p>{notice.message}</p>{notice.startsAt ? <small>Inicio: {formatClock(notice.startsAt)}</small> : null}</div></article>)}</div>
 }
 
+function TermsModal({ text, onClose, onAccept }: { text?: string; onClose: () => void; onAccept: () => void }) {
+  return (
+    <div className="terms-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="terms-modal" role="dialog" aria-modal="true" aria-labelledby="terms-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="terms-modal-head">
+          <div><span>Termos da rede</span><h2 id="terms-title">Termos de uso</h2></div>
+          <button type="button" aria-label="Fechar termos" onClick={onClose}><X /></button>
+        </div>
+        <div className="terms-scroll"><p>{text || 'Ao continuar, voce declara ciencia e aceite das regras de uso da rede de visitantes.'}</p></div>
+        <div className="terms-actions"><button className="terms-secondary" type="button" onClick={onClose}>Fechar</button><button className="primary terms-close" type="button" onClick={onAccept}>Li e aceito os termos</button></div>
+      </section>
+    </div>
+  )
+}
+
 function StageList({ stage }: { stage: Stage }) {
   const steps: Array<[Stage, string]> = [['validating', 'Validando dados'], ['authorizing', 'Autorizando no UniFi'], ['confirming', 'Confirmando authorized=true'], ['checking', 'Verificando acesso'], ['released', 'Conexao liberada']]
   const index = steps.findIndex(([id]) => id === stage)
@@ -199,12 +421,18 @@ function StageList({ stage }: { stage: Stage }) {
   return <ol className="stages">{steps.map(([id, label], stepIndex) => <li key={id} className={stepIndex <= index ? 'done' : ''}><CheckCircle2 /> {label}</li>)}</ol>
 }
 
-function SuccessScreen({ session, redirectUrl, notices }: { session: SessionStatus | null; redirectUrl: string; notices: Notice[] }) {
-  return <main className="portal-shell"><section className="panel success-card"><CheckCircle2 className="hero-icon" /><h1>Conexao liberada</h1><p className="muted">A rede ja pode acessar a Internet. Esta janela pode ser dispensada automaticamente pelo Android ou iOS.</p><NoticeList notices={notices} />{session ? <SessionPanel session={session} /> : null}<a className="primary link" href={redirectUrl || 'https://www.gstatic.com/generate_204'}>Continuar para Internet</a></section></main>
+function SuccessScreen({ session, redirectUrl, notices, method, networkName }: { session: SessionStatus | null; redirectUrl: string; notices: Notice[]; method: Method; networkName: string }) {
+  return <main className="portal-shell public-portal-shell"><section className="panel success-card public-success-card"><CheckCircle2 className="hero-icon" /><h1>Acesso liberado</h1><p className="muted">Voce ja pode navegar na Internet. Esta janela pode ser dispensada automaticamente pelo Android ou iOS.</p><NoticeList notices={notices} />{session ? <SessionPanel session={session} method={method} networkName={networkName} /> : null}<a className="primary link" href={redirectUrl || 'https://www.gstatic.com/generate_204'}>Continuar para Internet</a></section></main>
 }
 
-function SessionPanel({ session }: { session: SessionStatus }) {
-  return <div className="session-box"><div><span>Autorizada em</span><strong>{formatClock(session.authorizedAt)}</strong></div><div><span>Expira em</span><strong>{formatClock(session.expiresAt)}</strong></div><div><span>Tempo total</span><strong>{formatDuration(session.totalSeconds)}</strong></div><div><span>Tempo restante</span><strong>{formatDuration(session.remainingSeconds)}</strong></div>{session.warningMessage ? <p className="warning-line"><AlertTriangle /> {session.warningMessage}</p> : null}</div>
+function SessionPanel({ session, method, networkName }: { session: SessionStatus; method: Method; networkName: string }) {
+  const [remaining, setRemaining] = useState(session.remainingSeconds)
+  useEffect(() => {
+    setRemaining(session.remainingSeconds)
+    const handle = window.setInterval(() => setRemaining((value) => Math.max(0, value - 1)), 1000)
+    return () => window.clearInterval(handle)
+  }, [session.remainingSeconds])
+  return <div className="session-box success-session-box"><div><span>Rede</span><strong>{session.ssid || networkName}</strong></div><div><span>Metodo usado</span><strong>{method === 'cpf' ? 'CPF' : method === 'email' ? 'Email' : 'Voucher'}</strong></div><div><span>Autorizada em</span><strong>{formatClock(session.authorizedAt)}</strong></div><div><span>Tempo restante</span><strong>{formatCountdown(remaining)}</strong></div>{remaining <= 600 && remaining > 0 ? <p className="warning-line"><AlertTriangle /> Seu acesso termina em {Math.ceil(remaining / 60)} minutos.</p> : null}{session.warningMessage ? <p className="warning-line"><AlertTriangle /> {session.warningMessage}</p> : null}</div>
 }
 
 function Admin() {
@@ -429,11 +657,56 @@ function SessionsPage({ filter, onFilter }: { filter: SessionFilter; onFilter: (
 }
 
 function VisitorsPanel({ visitors }: { visitors: ClientRow[] }) {
-  return <div className="admin-content"><Panel title="Usuarios e visitantes" icon={<UsersRound />}>{visitors.length ? <DataTable rows={visitors} empty="Nenhum visitante listado." /> : <EmptyState message="Nenhum visitante listado." />}</Panel></div>
+  const [query, setQuery] = useState('')
+  const [site, setSite] = useState('ALL')
+  const [status, setStatus] = useState('ALL')
+  const [selected, setSelected] = useState<ClientRow | null>(null)
+  const [ending, setEnding] = useState(false)
+  const [confirmEnd, setConfirmEnd] = useState<ClientRow | null>(null)
+  const sites = Array.from(new Set(visitors.map((row) => textValue(row, ['siteName', 'siteId'])).filter(Boolean)))
+  const filtered = visitors.filter((row) => {
+    const blob = JSON.stringify(row).toLowerCase()
+    const rowSite = textValue(row, ['siteName', 'siteId'])
+    const rowStatus = boolValue(row, 'authorized') ? 'authorized' : textValue(row, ['portalStatus', 'status']).toLowerCase()
+    return (!query || blob.includes(query.toLowerCase())) && (site === 'ALL' || rowSite === site) && (status === 'ALL' || rowStatus.includes(status.toLowerCase()))
+  })
+  const endAccess = async (row: ClientRow) => {
+    const sessionId = textValue(row, ['sessionId'])
+    if (!sessionId) return
+    setEnding(true)
+    try {
+      await api(`/api/admin/sessions/${encodeURIComponent(sessionId)}/end`, { method: 'POST' })
+      setConfirmEnd(null)
+      setSelected(null)
+      window.location.reload()
+    } finally {
+      setEnding(false)
+    }
+  }
+  return <div className="admin-content"><Panel title="Usuarios e visitantes" icon={<UsersRound />}><div className="table-toolbar"><input aria-label="Buscar visitante" placeholder="Buscar por nome, MAC observado, IP, SSID, AP..." value={query} onChange={(event) => setQuery(event.target.value)} /><select aria-label="Filtrar por site" value={site} onChange={(event) => setSite(event.target.value)}><option value="ALL">Todos os sites</option>{sites.map((item) => <option key={item} value={item}>{item}</option>)}</select><select aria-label="Filtrar por status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="ALL">Todos os status</option><option value="authorized">Autorizado</option><option value="expired">Expirado</option><option value="disconnected">Encerrado</option></select></div>{filtered.length ? <div className="visitor-grid">{filtered.map((row, index) => <button className="visitor-card" key={textValue(row, ['id', 'mac']) || index} type="button" onClick={() => setSelected(row)}><div><strong>{textValue(row, ['name', 'hostname']) || 'Dispositivo sem nome'}</strong><span>{textValue(row, ['siteName']) || 'Site nao informado'} - {textValue(row, ['ssid']) || 'SSID indisponivel'}</span></div><dl><div><dt>MAC observado</dt><dd>{textValue(row, ['mac']) || '-'}</dd></div><div><dt>IP</dt><dd>{textValue(row, ['ip']) || '-'}</dd></div><div><dt>Status</dt><dd>{boolValue(row, 'authorized') ? 'Autorizado' : textValue(row, ['portalStatus', 'status']) || '-'}</dd></div><div><dt>Tempo restante</dt><dd>{row.remainingSeconds ? formatCountdown(Number(row.remainingSeconds)) : '-'}</dd></div></dl></button>)}</div> : <EmptyState message="Nenhum visitante encontrado." />}</Panel>{selected ? <ClientDrawer row={selected} onClose={() => setSelected(null)} onEnd={() => setConfirmEnd(selected)} /> : null}{confirmEnd ? <ConfirmDialog title="Encerrar acesso" message="Esta acao encerra o acesso deste visitante na UniFi. Continuar?" busy={ending} onCancel={() => setConfirmEnd(null)} onConfirm={() => void endAccess(confirmEnd)} /> : null}</div>
+}
+
+function ClientDrawer({ row, onClose, onEnd }: { row: ClientRow; onClose: () => void; onEnd: () => void }) {
+  return <div className="drawer-backdrop" role="presentation" onMouseDown={onClose}><aside className="detail-drawer" role="dialog" aria-modal="true" aria-label="Informacoes do dispositivo" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-head"><div><span>Informacoes do dispositivo</span><h2>{textValue(row, ['name', 'hostname']) || 'Dispositivo sem nome'}</h2></div><button type="button" aria-label="Fechar" onClick={onClose}><X /></button></div><div className="detail-list"><InfoLine label="MAC observado" value={textValue(row, ['mac'])} /><InfoLine label="IP" value={textValue(row, ['ip'])} /><InfoLine label="Site" value={textValue(row, ['siteName', 'siteId'])} /><InfoLine label="AP" value={textValue(row, ['apMac'])} /><InfoLine label="SSID" value={textValue(row, ['ssid'])} /><InfoLine label="Sinal" value={textValue(row, ['signal'])} /><InfoLine label="Metodo de autenticacao" value={textValue(row, ['authorizationMethod'])} /><InfoLine label="Autorizado em" value={formatClock(textValue(row, ['authorizedAt']))} /><InfoLine label="Expira em" value={formatClock(textValue(row, ['expiresAt']))} /><InfoLine label="Tempo restante" value={row.remainingSeconds ? formatCountdown(Number(row.remainingSeconds)) : ''} /></div>{boolValue(row, 'canEndAccess') ? <button className="danger-button" type="button" onClick={onEnd}>Encerrar acesso</button> : <p className="panel-note">Nenhuma acao UniFi disponivel para este registro.</p>}</aside></div>
 }
 
 function AccessPointsPanel({ accessPoints }: { accessPoints: AccessPoint[] }) {
-  return <div className="admin-content"><Panel title="Access Points" icon={<Radio />}>{accessPoints.length ? <DataTable rows={accessPoints} empty="Nenhum access point listado." /> : <EmptyState message="Nenhum access point listado pela API atual." />}</Panel></div>
+  const [query, setQuery] = useState('')
+  const [selected, setSelected] = useState<AccessPoint | null>(null)
+  const filtered = accessPoints.filter((row) => JSON.stringify(row).toLowerCase().includes(query.toLowerCase()))
+  return <div className="admin-content"><Panel title="Access Points" icon={<Radio />}><div className="table-toolbar"><input aria-label="Buscar access point" placeholder="Buscar por nome, modelo, MAC, IP ou site..." value={query} onChange={(event) => setQuery(event.target.value)} /></div>{filtered.length ? <div className="ap-grid">{filtered.map((ap, index) => <button className="ap-card" key={textValue(ap, ['id', 'mac']) || index} type="button" onClick={() => setSelected(ap)}><div><strong>{textValue(ap, ['name']) || 'AP sem nome'}</strong><span>{textValue(ap, ['model']) || 'Modelo indisponivel'}</span></div><dl><div><dt>MAC</dt><dd>{textValue(ap, ['mac']) || '-'}</dd></div><div><dt>IP</dt><dd>{textValue(ap, ['ip']) || '-'}</dd></div><div><dt>Site</dt><dd>{textValue(ap, ['siteName']) || '-'}</dd></div><div><dt>Clientes</dt><dd>{textValue(ap, ['clientes']) || '-'}</dd></div><div><dt>Canal</dt><dd>{textValue(ap, ['canal']) || '-'}</dd></div><div><dt>Banda</dt><dd>{textValue(ap, ['banda']) || '-'}</dd></div></dl></button>)}</div> : <EmptyState message="Nenhum access point listado pela API atual." />}</Panel>{selected ? <ApDrawer row={selected} onClose={() => setSelected(null)} /> : null}</div>
+}
+
+function ApDrawer({ row, onClose }: { row: AccessPoint; onClose: () => void }) {
+  return <div className="drawer-backdrop" role="presentation" onMouseDown={onClose}><aside className="detail-drawer" role="dialog" aria-modal="true" aria-label="Detalhes do access point" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-head"><div><span>Access Point</span><h2>{textValue(row, ['name']) || 'AP sem nome'}</h2></div><button type="button" aria-label="Fechar" onClick={onClose}><X /></button></div><div className="detail-list"><InfoLine label="Modelo" value={textValue(row, ['model'])} /><InfoLine label="MAC" value={textValue(row, ['mac'])} /><InfoLine label="IP" value={textValue(row, ['ip'])} /><InfoLine label="Site" value={textValue(row, ['siteName'])} /><InfoLine label="Status" value={textValue(row, ['status'])} /><InfoLine label="Clientes" value={textValue(row, ['clientes'])} /><InfoLine label="Uptime" value={textValue(row, ['uptime'])} /><InfoLine label="Canal" value={textValue(row, ['canal'])} /><InfoLine label="Banda" value={textValue(row, ['banda'])} /></div><p className="panel-note">Reiniciar AP exige endpoint administrativo especifico e confirmacao sensivel; interface preparada, acao nao conectada nesta rodada.</p></aside></div>
+}
+
+function InfoLine({ label, value }: { label: string; value?: string }) {
+  return <div className="info-line"><span>{label}</span><strong>{value || '-'}</strong></div>
+}
+
+function ConfirmDialog({ title, message, busy, onCancel, onConfirm }: { title: string; message: string; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  return <div className="modal-backdrop" role="presentation"><section className="confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title"><h2 id="confirm-title">{title}</h2><p>{message}</p><div className="confirm-actions"><button type="button" onClick={onCancel} disabled={busy}>Cancelar</button><button className="danger-button" type="button" onClick={onConfirm} disabled={busy}>{busy ? 'Encerrando...' : 'Encerrar acesso'}</button></div></section></div>
 }
 
 function AdminsPanel({ admin }: { admin: AdminMe | null }) {
@@ -442,12 +715,6 @@ function AdminsPanel({ admin }: { admin: AdminMe | null }) {
 
 function SettingsPanel({ admin, maintenance }: { admin: AdminMe | null; maintenance: MaintenanceAdmin | null }) {
   return <div className="admin-content"><Panel title="Configuracoes" icon={<Settings />}><div className="prepared-grid"><InfoTile title="Sessao segura" value="HttpOnly" detail="O painel continua usando cookies e CSRF do backend." icon={<LockKeyhole />} /><InfoTile title="Conta" value={admin?.email ?? 'Autenticada'} detail="Dados carregados de /api/admin/me." icon={<UserRound />} /><InfoTile title="Modo manutencao" value={maintenance?.maintenanceEnabled ? 'Ativo' : 'Inativo'} detail="Configuracao real carregada do backend." icon={<Clock />} /></div></Panel></div>
-}
-
-function DataTable({ rows, empty }: { rows: Record<string, unknown>[]; empty: string }) {
-  if (!rows.length) return <EmptyState message={empty} />
-  const columns = Object.keys(rows[0]).slice(0, 6)
-  return <div className="admin-table-wrap"><table className="admin-table"><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{columns.map((column) => <td key={column}>{String(row[column] ?? '-')}</td>)}</tr>)}</tbody></table></div>
 }
 
 function InfoTile({ title, value, detail, icon }: { title: string; value: string; detail: string; icon: ReactNode }) {

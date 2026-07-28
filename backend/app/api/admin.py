@@ -40,7 +40,7 @@ from app.schemas.admin import (
 from app.security.passwords import verify_password
 from app.security.tokens import random_token_urlsafe, secret_hash
 from app.services.rate_limit import enforce_rate_limit, record_attempt
-from app.services.sessions import dashboard_counts, expire_due_sessions
+from app.services.sessions import dashboard_counts, duration_between, expire_due_sessions, seconds_remaining
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -127,6 +127,24 @@ def _client_authorized(row: dict[str, Any]) -> bool:
 
 def _site_session_count(db: Session, site_id: str) -> int:
     return db.execute(select(func.count(GuestSession.id)).where(GuestSession.site == site_id)).scalar_one()
+
+def _client_portal_session(db: Session, client_mac: str) -> dict[str, Any]:
+    if not client_mac:
+        return {}
+    session = db.scalar(select(GuestSession).where(GuestSession.client_mac == client_mac.lower()).order_by(GuestSession.created_at.desc()).limit(1))
+    if not session:
+        return {}
+    return {
+        "sessionId": session.id,
+        "portalStatus": session.status.value.lower(),
+        "authorizationMethod": session.authorization_method.value,
+        "authorizedAt": session.authorized_at,
+        "expiresAt": session.expires_at,
+        "remainingSeconds": seconds_remaining(session),
+        "canEndAccess": bool(session.site and session.unifi_client_id and session.status == SessionStatus.AUTHORIZED),
+    }
+
+
 def _notification_out(row: PortalNotification) -> NotificationAdminResponse:
     return NotificationAdminResponse(id=row.id, type=row.type, title=row.title, message=row.message, startsAt=row.starts_at, endsAt=row.ends_at, site=row.site, enabled=row.enabled, createdAt=row.created_at, updatedAt=row.updated_at)
 
@@ -341,7 +359,7 @@ def update_notification(notification_id: str, payload: NotificationUpdateRequest
 
 
 @router.get("/users")
-async def list_users(siteId: str | None = None, _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+async def list_users(siteId: str | None = None, db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
     rows: list[dict[str, Any]] = []
     for site in await unifi_client.list_sites():
         site_id = _unifi_site_id(site)
@@ -359,6 +377,7 @@ async def list_users(siteId: str | None = None, _admin: AdminUser = Depends(requ
                     "apMac": _client_ap_mac(client),
                     "authorized": _client_authorized(client),
                     "ssid": (client.get("wifiConnection") or {}).get("ssid") or client.get("ssid"),
+                    **_client_portal_session(db, _client_mac(client)),
                 }
             )
     return rows
@@ -397,6 +416,29 @@ async def list_access_points(siteId: str | None = None, _admin: AdminUser = Depe
                 }
             )
     return rows
+
+
+@router.post("/sessions/{session_id}/end", dependencies=[Depends(require_csrf)])
+async def end_guest_session(session_id: str, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    session = db.get(GuestSession, session_id)
+    if not session:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sessao nao encontrada.")
+    if not session.site or not session.unifi_client_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sessao sem contexto UniFi para encerramento.")
+    await unifi_client.unauthorize_guest(site_id=session.site, client_id=session.unifi_client_id)
+    try:
+        confirmed = await unifi_client.get_client_by_mac(session.site, session.client_mac)
+        if confirmed.authorized:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "UniFi ainda informa cliente autorizado.")
+    except UniFiError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel confirmar encerramento no UniFi.") from exc
+    now = utcnow()
+    session.status = SessionStatus.DISCONNECTED
+    session.disconnected_at = now
+    session.duration_seconds = duration_between(session.authorized_at or session.created_at, now)
+    audit(db, admin, "session.ended", "guest_session", session.id, {"site": session.site})
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/dashboard/charts")

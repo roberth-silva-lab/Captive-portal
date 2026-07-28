@@ -10,6 +10,7 @@ from app.api.deps import client_ip
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.integrations.email import send_email
+from app.integrations.email.service import wifi_code_email
 from app.integrations.unifi import UniFiError, unifi_client
 from app.models import (
     AuthorizationMethod,
@@ -220,10 +221,12 @@ def request_email_code(payload: EmailCodeRequest, request: Request, db: Session 
     ip = client_ip(request)
     enforce_rate_limit(db, payload.clientMac, ip, "email")
     code = str(int(random_token_urlsafe(4).encode().hex(), 16))[-6:].zfill(6)
-    expires_at = utcnow() + timedelta(minutes=5)
+    ttl_minutes = get_settings().email_code_ttl_minutes
+    expires_at = utcnow() + timedelta(minutes=ttl_minutes)
     db.add(EmailLoginCode(email_hash=secret_hash(payload.email.lower()), client_mac=payload.clientMac, code_hash=secret_hash(code), expires_at=expires_at))
     db.commit()
-    send_email(payload.email, "Codigo de acesso Wi-Fi", f"Seu codigo de acesso e {code}. Ele expira em 5 minutos.")
+    text_body, html_body = wifi_code_email(code, ttl_minutes)
+    send_email(payload.email, "Seu codigo de confirmacao", text_body, html_body)
     record_attempt(db, payload.clientMac, ip, "email", True)
     return {"expiresAt": expires_at}
 
