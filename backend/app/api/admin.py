@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import client_ip, current_admin, require_csrf, require_role
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.integrations.unifi import UniFiError, unifi_client
 from app.models import (
     AdminRole,
     AdminSession,
@@ -82,6 +83,50 @@ def _maintenance_state(row: MaintenanceConfig | None) -> MaintenanceAdminRespons
     )
 
 
+
+
+def _unifi_site_id(site: dict[str, Any]) -> str:
+    return str(site.get("id") or site.get("siteId") or site.get("_id") or "")
+
+
+def _unifi_site_name(site: dict[str, Any]) -> str:
+    return str(site.get("name") or site.get("displayName") or site.get("description") or _unifi_site_id(site))
+
+
+def _device_mac(row: dict[str, Any]) -> str:
+    return str(row.get("macAddress") or row.get("mac") or "")
+
+
+def _device_id(row: dict[str, Any]) -> str:
+    return str(row.get("id") or row.get("_id") or row.get("deviceId") or _device_mac(row))
+
+
+def _device_status(row: dict[str, Any]) -> str | None:
+    value = row.get("state") or row.get("status") or row.get("connectionState")
+    return str(value) if value is not None else None
+
+
+def _client_mac(row: dict[str, Any]) -> str:
+    return str(row.get("macAddress") or row.get("mac") or row.get("clientMac") or "")
+
+
+def _client_id(row: dict[str, Any]) -> str:
+    return str(row.get("id") or row.get("_id") or row.get("clientId") or _client_mac(row))
+
+
+def _client_ap_mac(row: dict[str, Any]) -> str:
+    uplink = row.get("uplinkDevice") or {}
+    wifi = row.get("wifiConnection") or {}
+    return str(uplink.get("macAddress") or uplink.get("mac") or wifi.get("apMacAddress") or row.get("apMac") or "")
+
+
+def _client_authorized(row: dict[str, Any]) -> bool:
+    access = row.get("access") or {}
+    return bool(access.get("authorized"))
+
+
+def _site_session_count(db: Session, site_id: str) -> int:
+    return db.execute(select(func.count(GuestSession.id)).where(GuestSession.site == site_id)).scalar_one()
 def _notification_out(row: PortalNotification) -> NotificationAdminResponse:
     return NotificationAdminResponse(id=row.id, type=row.type, title=row.title, message=row.message, startsAt=row.starts_at, endsAt=row.ends_at, site=row.site, enabled=row.enabled, createdAt=row.created_at, updatedAt=row.updated_at)
 
@@ -177,17 +222,22 @@ def dashboard(db: Session = Depends(get_db), _admin: AdminUser = Depends(require
 
 
 @router.get("/sites", response_model=list[SiteNode])
-def sites(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
-    configured = db.scalars(select(SiteProfile).order_by(SiteProfile.name)).all()
-    if not configured:
-        configured = [SiteProfile(name=name, slug=name.lower(), status="planned") for name in ["Sede", "Esdras", "DMA", "Default"]]
-    rows = []
-    for site in configured:
-        sessions = db.execute(select(func.count(GuestSession.id)).where(GuestSession.site == site.name)).scalar_one()
-        connected = db.execute(select(func.count(GuestSession.id)).where(GuestSession.site == site.name, GuestSession.status == SessionStatus.AUTHORIZED)).scalar_one()
-        aps = db.execute(select(func.count(func.distinct(GuestSession.ap_mac))).where(GuestSession.site == site.name)).scalar_one()
-        rows.append(SiteNode(name=site.name, status=site.status, aps=aps, connectedClients=connected, sessions=sessions))
-    return rows
+async def sites(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    try:
+        rows = []
+        for site in await unifi_client.list_sites():
+            site_id = _unifi_site_id(site)
+            if not site_id:
+                continue
+            devices = await unifi_client.list_devices(site_id)
+            clients = await unifi_client.list_clients(site_id)
+            aps = await unifi_client.list_access_points(site_id)
+            status = "connected" if devices or clients else "empty"
+            rows.append(SiteNode(name=_unifi_site_name(site), siteId=site_id, status=status, aps=len(aps), connectedClients=len(clients), sessions=_site_session_count(db, site_id)))
+        return rows
+    except UniFiError:
+        configured = db.scalars(select(SiteProfile).order_by(SiteProfile.name)).all()
+        return [SiteNode(name=site.name, siteId="", status="unavailable", aps=0, connectedClients=0, sessions=0) for site in configured]
 
 
 @router.post("/vouchers", response_model=VoucherResponse, dependencies=[Depends(require_csrf)])
@@ -291,13 +341,62 @@ def update_notification(notification_id: str, payload: NotificationUpdateRequest
 
 
 @router.get("/users")
-def list_users(_admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
-    return []
+async def list_users(siteId: str | None = None, _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    rows: list[dict[str, Any]] = []
+    for site in await unifi_client.list_sites():
+        site_id = _unifi_site_id(site)
+        if not site_id or (siteId and site_id != siteId):
+            continue
+        for client in await unifi_client.list_clients(site_id):
+            rows.append(
+                {
+                    "id": _client_id(client),
+                    "mac": _client_mac(client),
+                    "ip": client.get("ipAddress") or client.get("ip"),
+                    "name": client.get("name") or client.get("hostname"),
+                    "siteId": site_id,
+                    "siteName": _unifi_site_name(site),
+                    "apMac": _client_ap_mac(client),
+                    "authorized": _client_authorized(client),
+                    "ssid": (client.get("wifiConnection") or {}).get("ssid") or client.get("ssid"),
+                }
+            )
+    return rows
 
 
 @router.get("/access-points")
-def list_access_points(_admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
-    return []
+async def list_access_points(siteId: str | None = None, _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    rows: list[dict[str, Any]] = []
+    for site in await unifi_client.list_sites():
+        site_id = _unifi_site_id(site)
+        if not site_id or (siteId and site_id != siteId):
+            continue
+        clients = await unifi_client.list_clients(site_id)
+        client_count_by_ap: dict[str, int] = {}
+        for client in clients:
+            ap_mac = _client_ap_mac(client).lower()
+            if ap_mac:
+                client_count_by_ap[ap_mac] = client_count_by_ap.get(ap_mac, 0) + 1
+        for ap in await unifi_client.list_access_points(site_id):
+            mac = _device_mac(ap)
+            radio = ap.get("radio") or ap.get("radioTable") or {}
+            rows.append(
+                {
+                    "id": _device_id(ap),
+                    "name": ap.get("name") or ap.get("displayName"),
+                    "model": ap.get("model") or ap.get("modelName"),
+                    "mac": mac,
+                    "ip": ap.get("ipAddress") or ap.get("ip"),
+                    "siteId": site_id,
+                    "siteName": _unifi_site_name(site),
+                    "status": _device_status(ap),
+                    "uptime": ap.get("uptime") or ap.get("upTime"),
+                    "clientes": client_count_by_ap.get(mac.lower(), None),
+                    "canal": ap.get("channel") or radio.get("channel"),
+                    "banda": ap.get("band") or radio.get("band"),
+                }
+            )
+    return rows
 
 
 @router.get("/dashboard/charts")

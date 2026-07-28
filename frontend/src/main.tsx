@@ -40,7 +40,7 @@ type SessionStatus = { status: string; authorized: boolean; authorizedAt?: strin
 type Dashboard = { onlineUsers: number; expiringIn30Minutes: number; expiringIn10Minutes: number; scheduledMaintenances: number; activeNotifications: number; sessionsEndedToday: number; averageSessionSeconds: number; vouchersAvailable: number }
 type MaintenanceAdmin = { maintenanceEnabled: boolean; maintenanceActive: boolean; maintenanceScheduled: boolean; maintenanceTitle: string; maintenanceMessage: string; maintenanceStartAt?: string | null; maintenanceEndAt?: string | null; maintenanceImageUrl: string }
 type AdminMe = { id: string; email: string; name: string; role: string }
-type SiteNode = { name: string; status: string; aps: number; connectedClients: number; sessions: number }
+type SiteNode = { name: string; siteId?: string; status: string; aps: number; connectedClients: number; sessions: number }
 type AdminNotice = Notice & { enabled: boolean; createdAt: string; updatedAt: string }
 type AuditEntry = { id: number; actorId: string; event: string; createdAt: string; targetId: string }
 type Voucher = { id: string; codeLabel: string; durationMinutes: number; site: string; enabled: boolean; usedCount: number; expiresAt?: string | null; maxDevices?: number; dataLimitMb?: number | null; isActive?: boolean }
@@ -75,7 +75,7 @@ const portalParams = () => {
     clientMac: params.get('id') ?? params.get('mac') ?? params.get('clientMac') ?? '',
     apMac: params.get('ap') ?? params.get('apMac') ?? '',
     ssid: params.get('ssid') ?? '',
-    site: params.get('site') ?? 'Default',
+    site: params.get('site') ?? '',
     redirectUrl: params.get('url') ?? params.get('redirectUrl') ?? 'https://www.gstatic.com/generate_204',
   }
 }

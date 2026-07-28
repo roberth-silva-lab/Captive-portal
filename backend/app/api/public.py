@@ -138,14 +138,17 @@ def settings(site: str | None = None, db: Session = Depends(get_db)):
     )
 
 
-async def _authorize_unifi(payload, minutes: int, data_limit_mb: int | None = None, download_limit: int | None = None, upload_limit: int | None = None) -> tuple[str, str]:
-    site_id = await unifi_client.resolve_site_id(payload.site)
-    client = await unifi_client.get_client_by_mac(site_id, payload.clientMac)
-    await unifi_client.authorize_guest(site_id=site_id, client_id=client.id, minutes=minutes, data_limit_mb=data_limit_mb, rx_kbps=download_limit, tx_kbps=upload_limit)
-    confirmed = await unifi_client.get_client_by_mac(site_id, payload.clientMac)
+async def _authorize_unifi(payload, minutes: int, data_limit_mb: int | None = None, download_limit: int | None = None, upload_limit: int | None = None, requested_site: str | None = None) -> tuple[str, str]:
+    context = await unifi_client.resolve_client_context(
+        client_mac=payload.clientMac,
+        ap_mac=payload.apMac,
+        requested_site=requested_site if requested_site is not None else payload.site,
+    )
+    await unifi_client.authorize_guest(site_id=context.site_id, client_id=context.client_id, minutes=minutes, data_limit_mb=data_limit_mb, rx_kbps=download_limit, tx_kbps=upload_limit)
+    confirmed = await unifi_client.get_client_by_mac(context.site_id, payload.clientMac)
     if not confirmed.authorized:
         raise UniFiError("UniFi nao confirmou authorized=true para o cliente.")
-    return site_id, confirmed.id
+    return context.site_id, confirmed.id
 
 
 def _auth_response(session: GuestSession, minutes: int) -> AuthResponse:
@@ -184,7 +187,8 @@ async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Sessio
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Limite de dispositivos do voucher atingido.")
     minutes = voucher.time_limit_minutes or voucher.duration_minutes
     try:
-        site_id, client_id = await _authorize_unifi(payload, minutes, voucher.data_limit_mb, voucher.download_limit, voucher.upload_limit)
+        voucher_requested_site = voucher.site if voucher.site and voucher.site != "Default" else None
+        site_id, client_id = await _authorize_unifi(payload, minutes, voucher.data_limit_mb, voucher.download_limit, voucher.upload_limit, requested_site=voucher_requested_site)
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "unifi_error")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel confirmar a autorizacao no UniFi.") from exc

@@ -49,6 +49,7 @@ class DashboardSummary(BaseModel):
 
 class SiteNode(BaseModel):
     name: str
+    siteId: str = ""
     status: str
     aps: int = 0
     connectedClients: int = 0

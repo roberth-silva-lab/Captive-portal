@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
@@ -22,16 +23,82 @@ class UniFiClientRecord:
     ssid: str = ""
     ip: str = ""
     signal: int | None = None
+    raw: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class UniFiClientContext:
+    site_id: str
+    site_name: str
+    client_id: str
+    client: UniFiClientRecord
+
+
+def _mac(value: str | None) -> str:
+    return str(value or "").strip().lower()
+
+
+def _site_id(site: dict[str, Any]) -> str:
+    return str(site.get("id") or site.get("siteId") or site.get("_id") or "")
+
+
+def _site_name(site: dict[str, Any]) -> str:
+    return str(site.get("name") or site.get("displayName") or site.get("description") or _site_id(site))
+
+
+def _client_mac(client: dict[str, Any]) -> str:
+    return _mac(client.get("macAddress") or client.get("mac") or client.get("clientMac"))
+
+
+def _client_id(client: dict[str, Any]) -> str:
+    return str(client.get("id") or client.get("_id") or client.get("clientId") or "")
+
+
+def _client_ap_mac(client: dict[str, Any]) -> str:
+    access_point = client.get("accessPoint") or {}
+    uplink = client.get("uplinkDevice") or {}
+    wifi = client.get("wifiConnection") or {}
+    return _mac(
+        access_point.get("macAddress")
+        or access_point.get("mac")
+        or uplink.get("macAddress")
+        or uplink.get("mac")
+        or wifi.get("apMacAddress")
+        or wifi.get("apMac")
+        or client.get("apMacAddress")
+        or client.get("apMac")
+        or client.get("uplinkMac")
+    )
+
+
+def _record(site_id: str, client: dict[str, Any]) -> UniFiClientRecord:
+    access = client.get("access") or {}
+    wifi = client.get("wifiConnection") or {}
+    return UniFiClientRecord(
+        id=_client_id(client),
+        mac=_client_mac(client),
+        site_id=site_id,
+        authorized=bool(access.get("authorized")),
+        ap_mac=_client_ap_mac(client),
+        ssid=str(wifi.get("ssid") or client.get("ssid") or ""),
+        ip=str(client.get("ipAddress") or client.get("ip") or ""),
+        signal=client.get("signal"),
+        raw=client,
+    )
+
+
+def _device_type(row: dict[str, Any]) -> str:
+    return str(row.get("type") or row.get("deviceType") or row.get("category") or "").upper()
+
+
+def is_access_point(row: dict[str, Any]) -> bool:
+    device_type = _device_type(row)
+    model = str(row.get("model") or row.get("modelName") or "").upper()
+    return device_type in {"UAP", "ACCESS_POINT", "AP"} or model.startswith(("UAP", "U6", "U7"))
 
 
 class UniFiClient:
-    """Official UniFi Network Integration API client.
-
-    Based on Ubiquiti documentation for:
-    - GET /v1/sites
-    - GET /v1/sites/{siteId}/clients
-    - POST /v1/sites/{siteId}/clients/{clientId}/actions
-    """
+    """Official UniFi Network Integration API client."""
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -54,50 +121,88 @@ class UniFiClient:
             raise UniFiError(f"UniFi {method} {path} failed with HTTP {response.status_code}")
         return response.json()
 
-    async def list_sites(self) -> list[dict]:
+    async def list_sites(self) -> list[dict[str, Any]]:
         payload = await self._request("GET", "/sites")
         if isinstance(payload, list):
             return payload
         return payload.get("data", []) if isinstance(payload, dict) else []
 
     async def resolve_site_id(self, requested: str | None = None) -> str:
-        desired = (requested or self.site_name or "").lower()
+        desired = str(requested or "").strip().lower()
+        if not desired:
+            raise UniFiError("UniFi site must be explicit for this operation.")
         sites = await self.list_sites()
-        if not sites:
-            raise UniFiError("UniFi returned no sites.")
         for site in sites:
-            if str(site.get("id", "")).lower() == desired or str(site.get("name", "")).lower() == desired:
-                return str(site["id"])
-        return str(sites[0]["id"])
+            if _site_id(site).lower() == desired or _site_name(site).lower() == desired:
+                return _site_id(site)
+        raise UniFiError("Requested UniFi site was not found.")
 
-    async def list_clients(self, site_id: str, mac: str | None = None) -> list[dict]:
+    async def resolve_site(self, requested: str) -> dict[str, Any]:
+        desired = str(requested or "").strip().lower()
+        if not desired:
+            raise UniFiError("UniFi site must be explicit for this operation.")
+        for site in await self.list_sites():
+            if _site_id(site).lower() == desired or _site_name(site).lower() == desired:
+                return site
+        raise UniFiError("Requested UniFi site was not found.")
+
+    async def list_clients(self, site_id: str, mac: str | None = None) -> list[dict[str, Any]]:
         params = {}
         if mac:
             params["filter"] = f"macAddress.eq('{mac}')"
         payload = await self._request("GET", f"/sites/{site_id}/clients", params=params)
-        if isinstance(payload, list):
-            return payload
-        return payload.get("data", []) if isinstance(payload, dict) else []
+        rows = payload if isinstance(payload, list) else payload.get("data", [])
+        if mac:
+            wanted = _mac(mac)
+            return [row for row in rows if _client_mac(row) == wanted]
+        return rows
 
     async def get_client_by_mac(self, site_id: str, mac: str) -> UniFiClientRecord:
         clients = await self.list_clients(site_id, mac)
         for client in clients:
-            mac_value = str(client.get("macAddress") or client.get("mac") or "").lower()
-            if mac_value == mac.lower():
-                access = client.get("access") or {}
-                uplink = client.get("uplinkDevice") or {}
-                wifi = client.get("wifiConnection") or {}
-                return UniFiClientRecord(
-                    id=str(client.get("id") or client.get("_id") or ""),
-                    mac=mac_value,
-                    site_id=site_id,
-                    authorized=bool(access.get("authorized")),
-                    ap_mac=str(uplink.get("macAddress") or client.get("apMac") or ""),
-                    ssid=str(wifi.get("ssid") or client.get("ssid") or ""),
-                    ip=str(client.get("ipAddress") or client.get("ip") or ""),
-                    signal=client.get("signal"),
-                )
+            if _client_mac(client) == _mac(mac):
+                record = _record(site_id, client)
+                if not record.id:
+                    raise UniFiError("Client found in UniFi without client id.")
+                return record
         raise UniFiError("Client not found in UniFi site.")
+
+    async def resolve_client_context(self, *, client_mac: str, ap_mac: str | None = None, requested_site: str | None = None) -> UniFiClientContext:
+        sites = await self.list_sites()
+        if not sites:
+            raise UniFiError("UniFi returned no sites.")
+
+        if requested_site:
+            site = await self.resolve_site(requested_site)
+            site_id = _site_id(site)
+            client = await self.get_client_by_mac(site_id, client_mac)
+            return UniFiClientContext(site_id=site_id, site_name=_site_name(site), client_id=client.id, client=client)
+
+        matches: list[UniFiClientContext] = []
+        for site in sites:
+            site_id = _site_id(site)
+            if not site_id:
+                continue
+            for row in await self.list_clients(site_id, client_mac):
+                if _client_mac(row) != _mac(client_mac):
+                    continue
+                client = _record(site_id, row)
+                if not client.id:
+                    continue
+                matches.append(UniFiClientContext(site_id=site_id, site_name=_site_name(site), client_id=client.id, client=client))
+
+        if not matches:
+            raise UniFiError("Client not found in any UniFi site.")
+        if len(matches) == 1:
+            return matches[0]
+
+        desired_ap = _mac(ap_mac)
+        if desired_ap:
+            ap_matches = [match for match in matches if match.client.ap_mac == desired_ap]
+            if len(ap_matches) == 1:
+                return ap_matches[0]
+
+        raise UniFiError("Client site is ambiguous in UniFi.")
 
     async def authorize_guest(
         self,
@@ -127,10 +232,12 @@ class UniFiClient:
         )
         return payload if isinstance(payload, dict) else {"data": payload}
 
-    async def list_access_points(self, site_id: str) -> list[dict]:
+    async def list_devices(self, site_id: str) -> list[dict[str, Any]]:
         payload = await self._request("GET", f"/sites/{site_id}/devices")
-        rows = payload if isinstance(payload, list) else payload.get("data", [])
-        return [row for row in rows if str(row.get("type", "")).upper() in {"UAP", "ACCESS_POINT", "AP"}]
+        return payload if isinstance(payload, list) else payload.get("data", [])
+
+    async def list_access_points(self, site_id: str) -> list[dict[str, Any]]:
+        return [row for row in await self.list_devices(site_id) if is_access_point(row)]
 
 
 unifi_client = UniFiClient()
