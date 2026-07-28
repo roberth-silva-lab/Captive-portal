@@ -383,6 +383,75 @@ input:focus, textarea:focus { outline: 3px solid rgba(23, 107, 135, .18); border
 .readonly-date strong { display: block; margin-top: 4px; }
 .admin-save { width: auto; justify-self: start; padding: 0 18px; }
 
+
+.admin-metric {
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.admin-metric:hover {
+  transform: translateY(-1px);
+  border-color: #c8d9d3;
+  box-shadow: 0 16px 36px rgba(22, 32, 42, .08);
+}
+.admin-metric:focus-visible {
+  outline: 3px solid rgba(23, 107, 135, .28);
+  outline-offset: 3px;
+}
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.segmented button {
+  border: 1px solid #d5e0dc;
+  background: #fff;
+  color: #40514b;
+  min-height: 38px;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-weight: 750;
+}
+.segmented button.active {
+  border-color: #176b87;
+  background: #e8f3f6;
+  color: #0f607a;
+}
+.prepared-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.info-tile {
+  border: 1px solid #e1ebe6;
+  background: #fbfdfc;
+  border-radius: 8px;
+  padding: 16px;
+  min-height: 150px;
+}
+.info-tile span {
+  display: block;
+  color: #65746f;
+  font-size: .88rem;
+  font-weight: 720;
+}
+.info-tile strong {
+  display: block;
+  color: #17212b;
+  font-size: 1.2rem;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+.info-tile p {
+  margin: 8px 0 0;
+  color: #65746f;
+}
+.sidebar-nav {
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
 @media (max-width: 1180px) {
   .admin-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ops-grid { grid-template-columns: 1fr; }

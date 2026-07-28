@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useMemo, useState } from 'react'
+import { StrictMode, type ReactNode, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   Activity,
@@ -10,6 +10,7 @@ import {
   FileClock,
   Gauge,
   History,
+  KeyRound,
   LayoutDashboard,
   LockKeyhole,
   LogOut,
@@ -18,6 +19,7 @@ import {
   Menu,
   Megaphone,
   MonitorCheck,
+  Radio,
   ShieldCheck,
   Settings,
   Ticket,
@@ -41,11 +43,14 @@ type AdminMe = { id: string; email: string; name: string; role: string }
 type SiteNode = { name: string; status: string; aps: number; connectedClients: number; sessions: number }
 type AdminNotice = Notice & { enabled: boolean; createdAt: string; updatedAt: string }
 type AuditEntry = { id: number; actorId: string; event: string; createdAt: string; targetId: string }
-type Voucher = { id: string; codeLabel: string; durationMinutes: number; site: string; enabled: boolean; usedCount: number; expiresAt?: string | null }
+type Voucher = { id: string; codeLabel: string; durationMinutes: number; site: string; enabled: boolean; usedCount: number; expiresAt?: string | null; maxDevices?: number; dataLimitMb?: number | null; isActive?: boolean }
+type ClientRow = Record<string, unknown>
+type AccessPoint = Record<string, unknown>
 
 type Method = 'voucher' | 'cpf' | 'email'
 type Stage = 'idle' | 'validating' | 'authorizing' | 'confirming' | 'checking' | 'released' | 'error'
-type AdminSection = 'dashboard' | 'visitors' | 'vouchers' | 'notices' | 'maintenance' | 'sites' | 'audit'
+type AdminSection = 'dashboard' | 'sessions' | 'visitors' | 'vouchers' | 'notices' | 'maintenance' | 'sites' | 'access-points' | 'admins' | 'audit' | 'settings'
+type SessionFilter = 'all' | 'online' | 'expiring-30' | 'expiring-10' | 'ended-today'
 
 const csrfToken = () => document.cookie.split('; ').find((item) => item.startsWith('portal_csrf='))?.split('=')[1] ?? ''
 
@@ -212,7 +217,9 @@ function Admin() {
   const [notices, setNotices] = useState<AdminNotice[]>([])
   const [audit, setAudit] = useState<AuditEntry[]>([])
   const [vouchers, setVouchers] = useState<Voucher[]>([])
-  const [visitors, setVisitors] = useState<unknown[]>([])
+  const [visitors, setVisitors] = useState<ClientRow[]>([])
+  const [accessPoints, setAccessPoints] = useState<AccessPoint[]>([])
+  const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all')
   const [error, setError] = useState('')
   const [activeSection, setActiveSection] = useState<AdminSection>('dashboard')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -220,7 +227,7 @@ function Admin() {
   const [maintenanceMessage, setMaintenanceMessage] = useState('')
 
   const load = async () => {
-    const [me, dash, maint, siteRows, noticeRows, auditRows, voucherRows, visitorRows] = await Promise.all([
+    const [me, dash, maint, siteRows, noticeRows, auditRows, voucherRows, visitorRows, accessPointRows] = await Promise.all([
       api<AdminMe>('/api/admin/me'),
       api<Dashboard>('/api/admin/dashboard'),
       api<MaintenanceAdmin>('/api/admin/maintenance'),
@@ -228,7 +235,8 @@ function Admin() {
       api<AdminNotice[]>('/api/admin/notifications').catch(() => []),
       api<AuditEntry[]>('/api/admin/maintenance/audit').catch(() => []),
       api<Voucher[]>('/api/admin/vouchers').catch(() => []),
-      api<unknown[]>('/api/admin/users').catch(() => []),
+      api<ClientRow[]>('/api/admin/users').catch(() => []),
+      api<AccessPoint[]>('/api/admin/access-points').catch(() => []),
     ])
     setAdmin(me)
     setDashboard(dash)
@@ -238,6 +246,7 @@ function Admin() {
     setAudit(auditRows)
     setVouchers(voucherRows)
     setVisitors(visitorRows)
+    setAccessPoints(accessPointRows)
   }
 
   useEffect(() => { void load().catch(() => setDashboard(null)) }, [])
@@ -283,13 +292,17 @@ function Admin() {
       <AdminSidebar active={activeSection} open={menuOpen} onClose={() => setMenuOpen(false)} onSelect={(section) => { setActiveSection(section); setMenuOpen(false) }} />
       <section className="admin-main" aria-label="Conteudo administrativo">
         <AdminHeader admin={admin} maintenance={maintenance} onLogout={logout} onMenu={() => setMenuOpen(true)} />
-        {activeSection === 'dashboard' ? <DashboardHome dashboard={dashboard} maintenance={maintenance} sites={sites} notices={notices} audit={audit} /> : null}
-        {activeSection === 'visitors' ? <PlaceholderPanel title="Usuarios e visitantes" icon={<UsersRound />} items={visitors} empty="Nenhum visitante listado." /> : null}
+        {activeSection === 'dashboard' ? <DashboardHome dashboard={dashboard} maintenance={maintenance} sites={sites} notices={notices} audit={audit} onSelect={(section, filter) => { setActiveSection(section); if (filter) setSessionFilter(filter) }} /> : null}
+        {activeSection === 'sessions' ? <SessionsPage filter={sessionFilter} onFilter={setSessionFilter} /> : null}
+        {activeSection === 'visitors' ? <VisitorsPanel visitors={visitors} /> : null}
         {activeSection === 'vouchers' ? <VoucherPanel vouchers={vouchers} /> : null}
         {activeSection === 'notices' ? <NoticeAdminPanel notices={notices} /> : null}
         {activeSection === 'maintenance' && maintenance ? <MaintenanceAdminPanel maintenance={maintenance} saving={savingMaintenance} feedback={maintenanceMessage} onChange={setMaintenance} onSave={saveMaintenance} /> : null}
         {activeSection === 'sites' ? <SitesPanel sites={sites} /> : null}
+        {activeSection === 'access-points' ? <AccessPointsPanel accessPoints={accessPoints} /> : null}
+        {activeSection === 'admins' ? <AdminsPanel admin={admin} /> : null}
         {activeSection === 'audit' ? <AuditPanel audit={audit} /> : null}
+        {activeSection === 'settings' ? <SettingsPanel admin={admin} maintenance={maintenance} /> : null}
       </section>
     </main>
   )
@@ -312,17 +325,18 @@ function AdminLogin({ email, password, error, onEmail, onPassword, onLogin }: { 
 }
 
 function AdminSidebar({ active, open, onClose, onSelect }: { active: AdminSection; open: boolean; onClose: () => void; onSelect: (section: AdminSection) => void }) {
-  const items: Array<{ id?: AdminSection; label: string; icon: JSX.Element; disabled?: boolean }> = [
+  const items: Array<{ id?: AdminSection; label: string; icon: ReactNode; disabled?: boolean }> = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard /> },
-    { label: 'Sessoes', icon: <MonitorCheck />, disabled: true },
+    { id: 'sessions', label: 'Sessoes', icon: <MonitorCheck /> },
     { id: 'visitors', label: 'Usuarios/Visitantes', icon: <UsersRound /> },
     { id: 'vouchers', label: 'Vouchers', icon: <Ticket /> },
     { id: 'notices', label: 'Avisos', icon: <Megaphone /> },
     { id: 'maintenance', label: 'Manutencao', icon: <Clock /> },
     { id: 'sites', label: 'Sites', icon: <MapPinned /> },
-    { label: 'Administradores', icon: <UserCog />, disabled: true },
+    { id: 'access-points', label: 'Access Points', icon: <Radio /> },
+    { id: 'admins', label: 'Administradores', icon: <UserCog /> },
     { id: 'audit', label: 'Auditoria', icon: <History /> },
-    { label: 'Configuracoes', icon: <Settings />, disabled: true },
+    { id: 'settings', label: 'Configuracoes', icon: <Settings /> },
   ]
   return (
     <>
@@ -355,11 +369,11 @@ function AdminHeader({ admin, maintenance, onLogout, onMenu }: { admin: AdminMe 
   )
 }
 
-function DashboardHome({ dashboard, maintenance, sites, notices, audit }: { dashboard: Dashboard; maintenance: MaintenanceAdmin | null; sites: SiteNode[]; notices: AdminNotice[]; audit: AuditEntry[] }) {
+function DashboardHome({ dashboard, maintenance, sites, notices, audit, onSelect }: { dashboard: Dashboard; maintenance: MaintenanceAdmin | null; sites: SiteNode[]; notices: AdminNotice[]; audit: AuditEntry[]; onSelect: (section: AdminSection, filter?: SessionFilter) => void }) {
   const activeNotices = notices.filter((notice) => notice.enabled)
   return (
     <div className="admin-content">
-      <MetricGrid dashboard={dashboard} />
+      <MetricGrid dashboard={dashboard} onSelect={onSelect} />
       <section className="ops-grid" aria-label="Conteudo operacional">
         <SessionsRecent />
         <SitesPanel sites={sites} compact />
@@ -371,22 +385,22 @@ function DashboardHome({ dashboard, maintenance, sites, notices, audit }: { dash
   )
 }
 
-function MetricGrid({ dashboard }: { dashboard: Dashboard }) {
+function MetricGrid({ dashboard, onSelect }: { dashboard: Dashboard; onSelect: (section: AdminSection, filter?: SessionFilter) => void }) {
   const metrics = [
-    { title: 'Usuarios online', value: dashboard.onlineUsers, icon: <Activity />, description: 'Sessoes autorizadas agora.', state: 'normal' as const },
-    { title: 'Expiram em 30 min', value: dashboard.expiringIn30Minutes, icon: <Clock />, description: 'Sessoes proximas do fim.', state: dashboard.expiringIn30Minutes > 0 ? 'warning' as const : 'normal' as const },
-    { title: 'Expiram em 10 min', value: dashboard.expiringIn10Minutes, icon: <AlertTriangle />, description: 'Exigem maior atencao.', state: dashboard.expiringIn10Minutes > 0 ? 'critical' as const : 'normal' as const },
-    { title: 'Manutencoes agendadas', value: dashboard.scheduledMaintenances, icon: <FileClock />, description: 'Janelas programadas.', state: dashboard.scheduledMaintenances > 0 ? 'warning' as const : 'normal' as const },
-    { title: 'Avisos ativos', value: dashboard.activeNotifications, icon: <Megaphone />, description: 'Comunicados visiveis.', state: dashboard.activeNotifications > 0 ? 'warning' as const : 'normal' as const },
-    { title: 'Encerradas hoje', value: dashboard.sessionsEndedToday, icon: <CheckCircle2 />, description: 'Sessoes finalizadas no dia.', state: 'normal' as const },
-    { title: 'Tempo medio', value: formatMinutes(dashboard.averageSessionSeconds), icon: <Gauge />, description: 'Duracao media registrada.', state: 'normal' as const },
-    { title: 'Vouchers disponiveis', value: dashboard.vouchersAvailable, icon: <Ticket />, description: 'Vouchers ativos no portal.', state: dashboard.vouchersAvailable === 0 ? 'warning' as const : 'normal' as const },
+    { title: 'Usuarios online', value: dashboard.onlineUsers, icon: <Activity />, description: 'Sessoes autorizadas agora.', state: 'normal' as const, section: 'sessions' as const, filter: 'online' as const },
+    { title: 'Expiram em 30 min', value: dashboard.expiringIn30Minutes, icon: <Clock />, description: 'Sessoes proximas do fim.', state: dashboard.expiringIn30Minutes > 0 ? 'warning' as const : 'normal' as const, section: 'sessions' as const, filter: 'expiring-30' as const },
+    { title: 'Expiram em 10 min', value: dashboard.expiringIn10Minutes, icon: <AlertTriangle />, description: 'Exigem maior atencao.', state: dashboard.expiringIn10Minutes > 0 ? 'critical' as const : 'normal' as const, section: 'sessions' as const, filter: 'expiring-10' as const },
+    { title: 'Manutencoes agendadas', value: dashboard.scheduledMaintenances, icon: <FileClock />, description: 'Janelas programadas.', state: dashboard.scheduledMaintenances > 0 ? 'warning' as const : 'normal' as const, section: 'maintenance' as const },
+    { title: 'Avisos ativos', value: dashboard.activeNotifications, icon: <Megaphone />, description: 'Comunicados visiveis.', state: dashboard.activeNotifications > 0 ? 'warning' as const : 'normal' as const, section: 'notices' as const },
+    { title: 'Encerradas hoje', value: dashboard.sessionsEndedToday, icon: <CheckCircle2 />, description: 'Sessoes finalizadas no dia.', state: 'normal' as const, section: 'sessions' as const, filter: 'ended-today' as const },
+    { title: 'Tempo medio', value: formatMinutes(dashboard.averageSessionSeconds), icon: <Gauge />, description: 'Duracao media registrada.', state: 'normal' as const, section: 'sessions' as const },
+    { title: 'Vouchers disponiveis', value: dashboard.vouchersAvailable, icon: <Ticket />, description: 'Vouchers ativos no portal.', state: dashboard.vouchersAvailable === 0 ? 'warning' as const : 'normal' as const, section: 'vouchers' as const },
   ]
-  return <section className="admin-metrics" aria-label="Metricas do dashboard">{metrics.map((metric) => <MetricCard key={metric.title} {...metric} />)}</section>
+  return <section className="admin-metrics" aria-label="Metricas do dashboard">{metrics.map((metric) => <MetricCard key={metric.title} {...metric} onOpen={() => onSelect(metric.section, metric.filter)} />)}</section>
 }
 
-function MetricCard({ title, value, icon, description, state }: { title: string; value: number | string; icon: JSX.Element; description: string; state: 'normal' | 'warning' | 'critical' }) {
-  return <article className={`admin-metric ${state}`}><div className="metric-icon">{icon}</div><span>{title}</span><strong>{value}</strong><p>{description}</p></article>
+function MetricCard({ title, value, icon, description, state, onOpen }: { title: string; value: number | string; icon: ReactNode; description: string; state: 'normal' | 'warning' | 'critical'; onOpen: () => void }) {
+  return <button className={`admin-metric ${state}`} type="button" onClick={onOpen}><div className="metric-icon">{icon}</div><span>{title}</span><strong>{value}</strong><p>{description}</p></button>
 }
 
 function SessionsRecent() {
@@ -398,7 +412,7 @@ function SitesPanel({ sites, compact = false }: { sites: SiteNode[]; compact?: b
 }
 
 function NoticeAdminPanel({ notices, compact = false }: { notices: AdminNotice[]; compact?: boolean }) {
-  return <Panel title="Avisos ativos" icon={<Megaphone />} compact={compact}>{notices.length ? <div className="admin-list">{notices.slice(0, compact ? 4 : 20).map((notice) => <article key={notice.id} className={`admin-list-item ${notice.type.toLowerCase()}`}><div><strong>{notice.title}</strong><span>{notice.site} â€¢ {notice.type}</span></div><p>{notice.message}</p></article>)}</div> : <EmptyState message="Nenhum aviso ativo." />}</Panel>
+  return <Panel title="Avisos ativos" icon={<Megaphone />} compact={compact}>{notices.length ? <div className="admin-list">{notices.slice(0, compact ? 4 : 20).map((notice) => <article key={notice.id} className={`admin-list-item ${notice.type.toLowerCase()}`}><div><strong>{notice.title}</strong><span>{notice.site} - {notice.type}</span></div><p>{notice.message}</p></article>)}</div> : <EmptyState message="Nenhum aviso ativo." />}</Panel>
 }
 
 function AuditPanel({ audit, compact = false }: { audit: AuditEntry[]; compact?: boolean }) {
@@ -409,8 +423,35 @@ function VoucherPanel({ vouchers }: { vouchers: Voucher[] }) {
   return <Panel title="Vouchers" icon={<Ticket />}>{vouchers.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Codigo</th><th>Site</th><th>Duracao</th><th>Uso</th><th>Status</th></tr></thead><tbody>{vouchers.map((voucher) => <tr key={voucher.id}><td>{voucher.codeLabel}</td><td>{voucher.site}</td><td>{voucher.durationMinutes} min</td><td>{voucher.usedCount}</td><td>{voucher.enabled ? 'Ativo' : 'Inativo'}</td></tr>)}</tbody></table></div> : <EmptyState message="Nenhum voucher cadastrado." />}</Panel>
 }
 
-function PlaceholderPanel({ title, icon, items, empty }: { title: string; icon: JSX.Element; items: unknown[]; empty: string }) {
-  return <div className="admin-content"><Panel title={title} icon={icon}>{items.length ? <p className="muted">{items.length} registros retornados pela API.</p> : <EmptyState message={empty} />}</Panel></div>
+function SessionsPage({ filter, onFilter }: { filter: SessionFilter; onFilter: (value: SessionFilter) => void }) {
+  const labels: Record<SessionFilter, string> = { all: 'Todas', online: 'Online', 'expiring-30': 'Expiram em 30 min', 'expiring-10': 'Expiram em 10 min', 'ended-today': 'Encerradas hoje' }
+  return <div className="admin-content"><Panel title="Sessoes" icon={<MonitorCheck />}><div className="segmented" role="tablist" aria-label="Filtro de sessoes">{Object.entries(labels).map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} type="button" onClick={() => onFilter(key as SessionFilter)}>{label}</button>)}</div><EmptyState message="Nenhuma lista detalhada de sessoes foi retornada pela API atual." /></Panel></div>
+}
+
+function VisitorsPanel({ visitors }: { visitors: ClientRow[] }) {
+  return <div className="admin-content"><Panel title="Usuarios e visitantes" icon={<UsersRound />}>{visitors.length ? <DataTable rows={visitors} empty="Nenhum visitante listado." /> : <EmptyState message="Nenhum visitante listado." />}</Panel></div>
+}
+
+function AccessPointsPanel({ accessPoints }: { accessPoints: AccessPoint[] }) {
+  return <div className="admin-content"><Panel title="Access Points" icon={<Radio />}>{accessPoints.length ? <DataTable rows={accessPoints} empty="Nenhum access point listado." /> : <EmptyState message="Nenhum access point listado pela API atual." />}</Panel></div>
+}
+
+function AdminsPanel({ admin }: { admin: AdminMe | null }) {
+  return <div className="admin-content"><Panel title="Administradores" icon={<UserCog />}><div className="prepared-grid"><InfoTile title="Administrador atual" value={admin?.name ?? 'Sessao ativa'} detail={admin?.role ?? 'Role carregada pela API'} icon={<ShieldCheck />} /><InfoTile title="Gestao de administradores" value="Preparado" detail="Criacao, edicao e bloqueio exigem endpoint administrativo dedicado." icon={<KeyRound />} /></div></Panel></div>
+}
+
+function SettingsPanel({ admin, maintenance }: { admin: AdminMe | null; maintenance: MaintenanceAdmin | null }) {
+  return <div className="admin-content"><Panel title="Configuracoes" icon={<Settings />}><div className="prepared-grid"><InfoTile title="Sessao segura" value="HttpOnly" detail="O painel continua usando cookies e CSRF do backend." icon={<LockKeyhole />} /><InfoTile title="Conta" value={admin?.email ?? 'Autenticada'} detail="Dados carregados de /api/admin/me." icon={<UserRound />} /><InfoTile title="Modo manutencao" value={maintenance?.maintenanceEnabled ? 'Ativo' : 'Inativo'} detail="Configuracao real carregada do backend." icon={<Clock />} /></div></Panel></div>
+}
+
+function DataTable({ rows, empty }: { rows: Record<string, unknown>[]; empty: string }) {
+  if (!rows.length) return <EmptyState message={empty} />
+  const columns = Object.keys(rows[0]).slice(0, 6)
+  return <div className="admin-table-wrap"><table className="admin-table"><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{columns.map((column) => <td key={column}>{String(row[column] ?? '-')}</td>)}</tr>)}</tbody></table></div>
+}
+
+function InfoTile({ title, value, detail, icon }: { title: string; value: string; detail: string; icon: ReactNode }) {
+  return <article className="info-tile"><div className="metric-icon">{icon}</div><span>{title}</span><strong>{value}</strong><p>{detail}</p></article>
 }
 
 function MaintenanceSummary({ maintenance }: { maintenance: MaintenanceAdmin }) {
@@ -442,7 +483,7 @@ function ReadonlyDate({ label, value }: { label: string; value?: string | null }
   return <div className="readonly-date"><span>{label}</span><strong>{formatClock(value)}</strong></div>
 }
 
-function Panel({ title, icon, children, compact = false }: { title: string; icon: JSX.Element; children: React.ReactNode; compact?: boolean }) {
+function Panel({ title, icon, children, compact = false }: { title: string; icon: ReactNode; children: ReactNode; compact?: boolean }) {
   return <section className={`ops-panel ${compact ? 'compact' : ''}`}><div className="panel-title">{icon}<h2>{title}</h2></div>{children}</section>
 }
 
