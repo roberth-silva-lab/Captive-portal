@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import AuthorizationMethod, GuestSession, SessionStatus
@@ -81,6 +81,7 @@ def expire_due_sessions(db: Session) -> int:
             GuestSession.status == SessionStatus.AUTHORIZED,
             GuestSession.expires_at.is_not(None),
             GuestSession.expires_at <= now,
+            or_(GuestSession.site == "", GuestSession.unifi_client_id == ""),
         )
     ).all()
     for session in sessions:

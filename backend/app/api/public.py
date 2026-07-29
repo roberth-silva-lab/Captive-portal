@@ -293,7 +293,7 @@ def session_status(clientMac: str | None = None, mac: str | None = None, db: Ses
     session = db.scalar(select(GuestSession).where(GuestSession.client_mac == selected_mac).order_by(GuestSession.created_at.desc()).limit(1))
     if not session:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Sessao nao encontrada.")
-    if session.status == SessionStatus.AUTHORIZED and session.expires_at and session.expires_at <= utcnow():
+    if session.status == SessionStatus.AUTHORIZED and session.expires_at and session.expires_at <= utcnow() and not (session.site and session.unifi_client_id):
         session.status = SessionStatus.EXPIRED
         session.duration_seconds = duration_between(session.authorized_at or session.created_at, session.expires_at)
         db.commit()

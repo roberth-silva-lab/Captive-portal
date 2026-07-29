@@ -1,4 +1,4 @@
-import { StrictMode, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { StrictMode, type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   Activity,
@@ -10,7 +10,6 @@ import {
   FileClock,
   Gauge,
   History,
-  KeyRound,
   LayoutDashboard,
   LockKeyhole,
   LogOut,
@@ -34,12 +33,13 @@ import './styles.css'
 type NoticeType = 'INFO' | 'WARNING' | 'MAINTENANCE' | 'CRITICAL'
 type Notice = { id: string; type: NoticeType; title: string; message: string; startsAt?: string | null; endsAt?: string | null; site: string }
 type Maintenance = { enabled: boolean; active: boolean; scheduled: boolean; title: string; message: string; startsAt?: string | null; endsAt?: string | null; imageUrl: string; visualConfig: Record<string, unknown> }
-type PortalSettings = { networkName: string; establishmentName: string; termsText: string; maintenanceMode: boolean; maintenance: Maintenance; notifications: Notice[]; expirationWarningMinutes: number[] }
+type PortalSettings = { logoUrl: string; primaryColor: string; bannerText: string; welcomeText: string; successMessage?: string; expiredMessage?: string; networkName: string; establishmentName: string; termsText: string; maintenanceMode: boolean; maintenance: Maintenance; notifications: Notice[]; expirationWarningMinutes: number[] }
 type AuthResponse = { sessionId: string; authorized: boolean; authorizedAt: string; expiresAt: string; remainingSeconds: number; totalSeconds: number; sessionMinutes: number; nextCheckSeconds: number }
 type EmailCodeResponse = { expiresAt: string }
 type SessionStatus = { status: string; authorized: boolean; authorizedAt?: string | null; expiresAt?: string | null; serverNow: string; remainingSeconds: number; remainingMinutes: number; totalSeconds: number; warningMessage?: string | null; warningMinutes?: number | null; ssid: string; nextCheckSeconds: number }
 type Dashboard = { onlineUsers: number; expiringIn30Minutes: number; expiringIn10Minutes: number; scheduledMaintenances: number; activeNotifications: number; sessionsEndedToday: number; averageSessionSeconds: number; vouchersAvailable: number }
-type MaintenanceAdmin = { maintenanceEnabled: boolean; maintenanceActive: boolean; maintenanceScheduled: boolean; maintenanceTitle: string; maintenanceMessage: string; maintenanceStartAt?: string | null; maintenanceEndAt?: string | null; maintenanceImageUrl: string }
+type PortalAppearance = { networkName: string; establishmentName: string; logoUrl: string; primaryColor: string; bannerText: string; welcomeText: string; successMessage: string; expiredMessage: string; termsText: string; updatedAt?: string | null }
+type MaintenanceAdmin = { maintenanceEnabled: boolean; maintenanceActive: boolean; maintenanceScheduled: boolean; maintenanceTitle: string; maintenanceMessage: string; maintenanceStartAt?: string | null; maintenanceEndAt?: string | null; maintenanceImageUrl: string; maintenanceVisualConfig?: Record<string, unknown>; updatedAt?: string | null }
 type AdminMe = { id: string; email: string; name: string; role: string }
 type SiteNode = { name: string; siteId?: string; status: string; aps: number; connectedClients: number; sessions: number }
 type AdminNotice = Notice & { enabled: boolean; createdAt: string; updatedAt: string }
@@ -47,6 +47,8 @@ type AuditEntry = { id: number; actorId: string; event: string; createdAt: strin
 type Voucher = { id: string; codeLabel: string; durationMinutes: number; site: string; enabled: boolean; usedCount: number; expiresAt?: string | null; maxDevices?: number; dataLimitMb?: number | null; isActive?: boolean }
 type ClientRow = Record<string, unknown>
 type AccessPoint = Record<string, unknown>
+type GuestSessionRow = { id: string; name?: string; clientMac: string; apMac?: string; ssid?: string; site?: string; method: string; status: string; createdAt: string; authorizedAt?: string | null; expiresAt?: string | null; disconnectedAt?: string | null; remainingSeconds: number; durationSeconds: number; canEndAccess: boolean }
+type AdminUserRow = { id: string; name: string; email: string; role: string; status: string; mfa: string; createdAt: string; lastLogin?: string | null }
 
 type Method = 'voucher' | 'cpf' | 'email'
 type Stage = 'idle' | 'validating' | 'authorizing' | 'confirming' | 'checking' | 'released' | 'error'
@@ -83,6 +85,15 @@ const portalParams = () => {
 
 const formatClock = (iso?: string | null) => iso ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(iso)) : 'sem previsao'
 const formatMinutes = (seconds: number) => `${Math.round(seconds / 60)} min`
+const datetimeLocal = (iso?: string | null) => {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const offset = date.getTimezoneOffset() * 60000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+}
+const fromDatetimeLocal = (value: string) => value ? new Date(value).toISOString() : null
+const cssVars = (settings?: Pick<PortalSettings, 'primaryColor'> | null) => ({ '--portal-primary': settings?.primaryColor || '#176b87' }) as CSSProperties
 const formatCountdown = (seconds: number) => {
   const safe = Math.max(0, seconds)
   const hours = Math.floor(safe / 3600)
@@ -157,11 +168,11 @@ function Portal() {
 
   useEffect(() => {
     if (!params.clientMac || stage !== 'released') return
-    const tick = () => api<SessionStatus>(`/api/session/status?clientMac=${encodeURIComponent(params.clientMac)}`).then(setSession).catch(() => undefined)
+    const tick = () => api<SessionStatus>(`/api/session/status?clientMac=${encodeURIComponent(params.clientMac)}`).then((current) => { setSession(current); if (!current.authorized) { setStage('idle'); setMessage(settings?.expiredMessage || 'Sua sessao expirou. Autentique-se novamente para continuar usando o Wi-Fi.'); setMessageTone('error') } }).catch(() => undefined)
     tick()
     const handle = window.setInterval(tick, 30000)
     return () => window.clearInterval(handle)
-  }, [params.clientMac, stage])
+  }, [params.clientMac, settings?.expiredMessage, stage])
 
   useEffect(() => {
     if (emailCooldown <= 0) return
@@ -315,23 +326,23 @@ function Portal() {
 
   if (settings?.maintenance.active) return <MaintenanceScreen settings={settings} />
 
-  if (stage === 'released') return <SuccessScreen session={session} redirectUrl={params.redirectUrl} notices={settings?.notifications ?? []} method={authMethodUsed} networkName={networkName} />
+  if (stage === 'released') return <SuccessScreen session={session} redirectUrl={params.redirectUrl} notices={settings?.notifications ?? []} method={authMethodUsed} networkName={networkName} settings={settings} />
 
   return (
-    <main className="portal-shell public-portal-shell">
+    <main className="portal-shell public-portal-shell" style={cssVars(settings)}>
       <section className="panel portal-card public-portal-card" aria-labelledby="portal-title">
         <header className="portal-brand">
-          <div className="portal-brand-mark" aria-hidden="true"><ShieldCheck /></div>
+          <div className="portal-brand-mark" aria-hidden="true">{settings?.logoUrl ? <img src={settings.logoUrl} alt="" /> : <ShieldCheck />}</div>
           <div>
-            <span className="portal-eyebrow">Portal de Acesso Wi-Fi</span>
+            <span className="portal-eyebrow">{settings?.bannerText || 'Portal de Acesso Wi-Fi'}</span>
             <strong>{institutionName}</strong>
-            <p>Acesso seguro para visitantes</p>
+            <p>{settings?.welcomeText || 'Acesso seguro para visitantes'}</p>
           </div>
         </header>
 
         <div className="portal-heading">
-          <h1 id="portal-title">Acesso Wi-Fi</h1>
-          <p>Conecte este dispositivo com seguranca a {networkName}.</p>
+          <h1 id="portal-title">{settings?.bannerText || 'Acesso Wi-Fi'}</h1>
+          <p>{settings?.welcomeText || `Conecte este dispositivo com seguranca a ${networkName}.`}</p>
         </div>
 
         <NoticeList notices={settings?.notifications ?? []} />
@@ -391,7 +402,7 @@ function Portal() {
 
 function MaintenanceScreen({ settings }: { settings: PortalSettings }) {
   const item = settings.maintenance
-  return <main className="portal-shell maintenance"><section className="panel maintenance-card">{item.imageUrl ? <img src={item.imageUrl} alt="" /> : <Clock className="hero-icon" />}<h1>{item.title}</h1><p>{item.message}</p>{item.endsAt ? <p className="meta">Previsao de retorno: {formatClock(item.endsAt)}</p> : null}</section></main>
+  return <main className="portal-shell maintenance" style={cssVars(settings)}><section className="panel maintenance-card">{item.imageUrl ? <img src={item.imageUrl} alt="" /> : <Clock className="hero-icon" />}<span className="portal-eyebrow">{settings.establishmentName}</span><h1>{item.title}</h1><p>{item.message}</p>{item.startsAt ? <p className="meta">Inicio: {formatClock(item.startsAt)}</p> : null}{item.endsAt ? <p className="meta">Previsao de retorno: {formatClock(item.endsAt)}</p> : null}</section></main>
 }
 
 function NoticeList({ notices }: { notices: Notice[] }) {
@@ -422,7 +433,7 @@ function StageList({ stage }: { stage: Stage }) {
 }
 
 function SuccessScreen({ session, redirectUrl, notices, method, networkName }: { session: SessionStatus | null; redirectUrl: string; notices: Notice[]; method: Method; networkName: string }) {
-  return <main className="portal-shell public-portal-shell"><section className="panel success-card public-success-card"><CheckCircle2 className="hero-icon" /><h1>Acesso liberado</h1><p className="muted">Voce ja pode navegar na Internet. Esta janela pode ser dispensada automaticamente pelo Android ou iOS.</p><NoticeList notices={notices} />{session ? <SessionPanel session={session} method={method} networkName={networkName} /> : null}<a className="primary link" href={redirectUrl || 'https://www.gstatic.com/generate_204'}>Continuar para Internet</a></section></main>
+  return <main className="portal-shell public-portal-shell" style={cssVars(settings)}><section className="panel success-card public-success-card"><CheckCircle2 className="hero-icon" /><h1>Acesso liberado</h1><p className="muted">Voce ja pode navegar na Internet. Esta janela pode ser dispensada automaticamente pelo Android ou iOS.</p><NoticeList notices={notices} />{session ? <SessionPanel session={session} method={method} networkName={networkName} /> : null}<a className="primary link" href={redirectUrl || 'https://www.gstatic.com/generate_204'}>Continuar para Internet</a></section></main>
 }
 
 function SessionPanel({ session, method, networkName }: { session: SessionStatus; method: Method; networkName: string }) {
@@ -441,40 +452,53 @@ function Admin() {
   const [admin, setAdmin] = useState<AdminMe | null>(null)
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
   const [maintenance, setMaintenance] = useState<MaintenanceAdmin | null>(null)
+  const [appearance, setAppearance] = useState<PortalAppearance | null>(null)
   const [sites, setSites] = useState<SiteNode[]>([])
   const [notices, setNotices] = useState<AdminNotice[]>([])
   const [audit, setAudit] = useState<AuditEntry[]>([])
   const [vouchers, setVouchers] = useState<Voucher[]>([])
   const [visitors, setVisitors] = useState<ClientRow[]>([])
   const [accessPoints, setAccessPoints] = useState<AccessPoint[]>([])
+  const [sessions, setSessions] = useState<GuestSessionRow[]>([])
+  const [admins, setAdmins] = useState<AdminUserRow[]>([])
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all')
   const [error, setError] = useState('')
   const [activeSection, setActiveSection] = useState<AdminSection>('dashboard')
   const [menuOpen, setMenuOpen] = useState(false)
   const [savingMaintenance, setSavingMaintenance] = useState(false)
   const [maintenanceMessage, setMaintenanceMessage] = useState('')
+  const [appearanceSaving, setAppearanceSaving] = useState(false)
+  const [appearanceMessage, setAppearanceMessage] = useState('')
+  const [sessionActionBusy, setSessionActionBusy] = useState(false)
+  const [sessionActionMessage, setSessionActionMessage] = useState('')
 
   const load = async () => {
-    const [me, dash, maint, siteRows, noticeRows, auditRows, voucherRows, visitorRows, accessPointRows] = await Promise.all([
+    const [me, dash, maint, appearanceRow, siteRows, noticeRows, auditRows, voucherRows, visitorRows, accessPointRows, sessionRows, adminRows] = await Promise.all([
       api<AdminMe>('/api/admin/me'),
       api<Dashboard>('/api/admin/dashboard'),
       api<MaintenanceAdmin>('/api/admin/maintenance'),
+      api<PortalAppearance>('/api/admin/portal-appearance'),
       api<SiteNode[]>('/api/admin/sites').catch(() => []),
       api<AdminNotice[]>('/api/admin/notifications').catch(() => []),
       api<AuditEntry[]>('/api/admin/maintenance/audit').catch(() => []),
       api<Voucher[]>('/api/admin/vouchers').catch(() => []),
       api<ClientRow[]>('/api/admin/users').catch(() => []),
       api<AccessPoint[]>('/api/admin/access-points').catch(() => []),
+      api<GuestSessionRow[]>('/api/admin/sessions').catch(() => []),
+      api<AdminUserRow[]>('/api/admin/admins').catch(() => []),
     ])
     setAdmin(me)
     setDashboard(dash)
     setMaintenance(maint)
+    setAppearance(appearanceRow)
     setSites(siteRows)
     setNotices(noticeRows)
     setAudit(auditRows)
     setVouchers(voucherRows)
     setVisitors(visitorRows)
     setAccessPoints(accessPointRows)
+    setSessions(sessionRows)
+    setAdmins(adminRows)
   }
 
   useEffect(() => { void load().catch(() => setDashboard(null)) }, [])
@@ -495,6 +519,38 @@ function Admin() {
     setAdmin(null)
   }
 
+  const endAdminSession = async (sessionId: string) => {
+    setSessionActionBusy(true)
+    setSessionActionMessage('')
+    try {
+      await api('/api/admin/sessions/' + encodeURIComponent(sessionId) + '/end', { method: 'POST' })
+      setSessionActionMessage('Acesso encerrado com sucesso.')
+      await load().catch(() => undefined)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Nao foi possivel encerrar o acesso.'
+      setSessionActionMessage(message)
+      throw new Error(message, { cause: err })
+    } finally {
+      setSessionActionBusy(false)
+    }
+  }
+
+
+  const saveAppearance = async () => {
+    if (!appearance) return
+    setAppearanceSaving(true)
+    setAppearanceMessage('')
+    try {
+      const updated = await api<PortalAppearance>('/api/admin/portal-appearance', { method: 'PUT', body: JSON.stringify(appearance) })
+      setAppearance(updated)
+      setAppearanceMessage('Visual e termos salvos com sucesso.')
+      await load().catch(() => undefined)
+    } catch (err) {
+      setAppearanceMessage(err instanceof Error ? err.message : 'Nao foi possivel salvar o visual do portal.')
+    } finally {
+      setAppearanceSaving(false)
+    }
+  }
   const saveMaintenance = async () => {
     if (!maintenance) return
     setSavingMaintenance(true)
@@ -521,16 +577,16 @@ function Admin() {
       <section className="admin-main" aria-label="Conteudo administrativo">
         <AdminHeader admin={admin} maintenance={maintenance} onLogout={logout} onMenu={() => setMenuOpen(true)} />
         {activeSection === 'dashboard' ? <DashboardHome dashboard={dashboard} maintenance={maintenance} sites={sites} notices={notices} audit={audit} onSelect={(section, filter) => { setActiveSection(section); if (filter) setSessionFilter(filter) }} /> : null}
-        {activeSection === 'sessions' ? <SessionsPage filter={sessionFilter} onFilter={setSessionFilter} /> : null}
-        {activeSection === 'visitors' ? <VisitorsPanel visitors={visitors} /> : null}
+        {activeSection === 'sessions' ? <SessionsPage sessions={sessions} filter={sessionFilter} busy={sessionActionBusy} feedback={sessionActionMessage} onFilter={setSessionFilter} onEndSession={endAdminSession} /> : null}
+        {activeSection === 'visitors' ? <VisitorsPanel visitors={visitors} busy={sessionActionBusy} onEndSession={endAdminSession} /> : null}
         {activeSection === 'vouchers' ? <VoucherPanel vouchers={vouchers} /> : null}
         {activeSection === 'notices' ? <NoticeAdminPanel notices={notices} /> : null}
         {activeSection === 'maintenance' && maintenance ? <MaintenanceAdminPanel maintenance={maintenance} saving={savingMaintenance} feedback={maintenanceMessage} onChange={setMaintenance} onSave={saveMaintenance} /> : null}
         {activeSection === 'sites' ? <SitesPanel sites={sites} /> : null}
         {activeSection === 'access-points' ? <AccessPointsPanel accessPoints={accessPoints} /> : null}
-        {activeSection === 'admins' ? <AdminsPanel admin={admin} /> : null}
+        {activeSection === 'admins' ? <AdminsPanel admin={admin} admins={admins} /> : null}
         {activeSection === 'audit' ? <AuditPanel audit={audit} /> : null}
-        {activeSection === 'settings' ? <SettingsPanel admin={admin} maintenance={maintenance} /> : null}
+        {activeSection === 'settings' && appearance ? <SettingsPanel admin={admin} maintenance={maintenance} appearance={appearance} saving={appearanceSaving} feedback={appearanceMessage} onChange={setAppearance} onSave={saveAppearance} /> : null}
       </section>
     </main>
   )
@@ -553,28 +609,27 @@ function AdminLogin({ email, password, error, onEmail, onPassword, onLogin }: { 
 }
 
 function AdminSidebar({ active, open, onClose, onSelect }: { active: AdminSection; open: boolean; onClose: () => void; onSelect: (section: AdminSection) => void }) {
-  const items: Array<{ id?: AdminSection; label: string; icon: ReactNode; disabled?: boolean }> = [
-    { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard /> },
-    { id: 'sessions', label: 'Sessoes', icon: <MonitorCheck /> },
-    { id: 'visitors', label: 'Usuarios/Visitantes', icon: <UsersRound /> },
-    { id: 'vouchers', label: 'Vouchers', icon: <Ticket /> },
-    { id: 'notices', label: 'Avisos', icon: <Megaphone /> },
-    { id: 'maintenance', label: 'Manutencao', icon: <Clock /> },
-    { id: 'sites', label: 'Sites', icon: <MapPinned /> },
-    { id: 'access-points', label: 'Access Points', icon: <Radio /> },
-    { id: 'admins', label: 'Administradores', icon: <UserCog /> },
-    { id: 'audit', label: 'Auditoria', icon: <History /> },
-    { id: 'settings', label: 'Configuracoes', icon: <Settings /> },
+  const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem('admin_sidebar_collapsed') === 'true')
+  const groups: Array<{ label: string; items: Array<{ id: AdminSection; label: string; icon: ReactNode }> }> = [
+    { label: 'Visao geral', items: [{ id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard /> }] },
+    { label: 'Acesso', items: [{ id: 'sessions', label: 'Sessoes', icon: <MonitorCheck /> }, { id: 'visitors', label: 'Usuarios/Visitantes', icon: <UsersRound /> }, { id: 'vouchers', label: 'Vouchers', icon: <Ticket /> }] },
+    { label: 'Infraestrutura', items: [{ id: 'sites', label: 'Sites', icon: <MapPinned /> }, { id: 'access-points', label: 'Access Points', icon: <Radio /> }] },
+    { label: 'Comunicacao', items: [{ id: 'notices', label: 'Avisos', icon: <Megaphone /> }, { id: 'maintenance', label: 'Manutencao', icon: <Clock /> }] },
+    { label: 'Administracao', items: [{ id: 'admins', label: 'Administradores', icon: <UserCog /> }, { id: 'audit', label: 'Auditoria', icon: <History /> }, { id: 'settings', label: 'Configuracoes', icon: <Settings /> }] },
   ]
+  const toggleCollapsed = () => {
+    const next = !collapsed
+    setCollapsed(next)
+    window.localStorage.setItem('admin_sidebar_collapsed', String(next))
+  }
   return (
     <>
-      <aside className={`admin-sidebar ${open ? 'open' : ''}`} aria-label="Navegacao administrativa">
+      <aside className={`admin-sidebar ${open ? 'open' : ''} ${collapsed ? 'collapsed' : ''}`} aria-label="Navegacao administrativa">
         <div className="sidebar-brand"><div className="brand-mark"><Wifi /></div><div><strong>Captive Portal</strong><span>Operacao Wi-Fi</span></div></div>
         <button className="sidebar-close" type="button" aria-label="Fechar menu" onClick={onClose}><X /></button>
+        <button className="collapse-button" type="button" aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'} onClick={toggleCollapsed}>{collapsed ? '>' : '<'}</button>
         <nav className="sidebar-nav">
-          {items.map((item) => item.disabled || !item.id
-            ? <button key={item.label} className="nav-item disabled" type="button" disabled aria-label={`${item.label} indisponivel`}>{item.icon}<span>{item.label}</span></button>
-            : <button key={item.id} className={`nav-item ${active === item.id ? 'active' : ''}`} type="button" onClick={() => onSelect(item.id)} aria-current={active === item.id ? 'page' : undefined}>{item.icon}<span>{item.label}</span></button>)}
+          {groups.map((group) => <div className="nav-group" key={group.label}><span className="nav-group-label">{group.label}</span>{group.items.map((item) => <button key={item.id} title={collapsed ? item.label : undefined} className={`nav-item ${active === item.id ? 'active' : ''}`} type="button" onClick={() => onSelect(item.id)} aria-current={active === item.id ? 'page' : undefined}>{item.icon}<span>{item.label}</span></button>)}</div>)}
         </nav>
       </aside>
       {open ? <button className="sidebar-backdrop" type="button" aria-label="Fechar menu" onClick={onClose} /> : null}
@@ -595,6 +650,11 @@ function AdminHeader({ admin, maintenance, onLogout, onMenu }: { admin: AdminMe 
       </div>
     </header>
   )
+}
+
+
+function PageHeader({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
+  return <header className="page-header"><div><span>Admin</span><h2>{title}</h2><p>{description}</p></div>{action ? <div className="page-actions">{action}</div> : null}</header>
 }
 
 function DashboardHome({ dashboard, maintenance, sites, notices, audit, onSelect }: { dashboard: Dashboard; maintenance: MaintenanceAdmin | null; sites: SiteNode[]; notices: AdminNotice[]; audit: AuditEntry[]; onSelect: (section: AdminSection, filter?: SessionFilter) => void }) {
@@ -648,21 +708,48 @@ function AuditPanel({ audit, compact = false }: { audit: AuditEntry[]; compact?:
 }
 
 function VoucherPanel({ vouchers }: { vouchers: Voucher[] }) {
-  return <Panel title="Vouchers" icon={<Ticket />}>{vouchers.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Codigo</th><th>Site</th><th>Duracao</th><th>Uso</th><th>Status</th></tr></thead><tbody>{vouchers.map((voucher) => <tr key={voucher.id}><td>{voucher.codeLabel}</td><td>{voucher.site}</td><td>{voucher.durationMinutes} min</td><td>{voucher.usedCount}</td><td>{voucher.enabled ? 'Ativo' : 'Inativo'}</td></tr>)}</tbody></table></div> : <EmptyState message="Nenhum voucher cadastrado." />}</Panel>
+  return <div className="admin-content"><PageHeader title="Vouchers" description="Gerencie vouchers próprios do portal armazenados no Neon." action={<button className="soft-button" type="button" disabled>+ Criar voucher</button>} /><Panel title="Vouchers" icon={<Ticket />}>{vouchers.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Codigo</th><th>Site</th><th>Duracao</th><th>Uso</th><th>Status</th></tr></thead><tbody>{vouchers.map((voucher) => <tr key={voucher.id}><td>{voucher.codeLabel}</td><td>{voucher.site}</td><td>{voucher.durationMinutes} min</td><td>{voucher.usedCount}</td><td>{voucher.enabled ? 'Ativo' : 'Inativo'}</td></tr>)}</tbody></table></div> : <EmptyState message="Nenhum voucher cadastrado." />}</Panel></div>
 }
 
-function SessionsPage({ filter, onFilter }: { filter: SessionFilter; onFilter: (value: SessionFilter) => void }) {
+function SessionsPage({ sessions, filter, busy, feedback, onFilter, onEndSession }: { sessions: GuestSessionRow[]; filter: SessionFilter; busy: boolean; feedback: string; onFilter: (value: SessionFilter) => void; onEndSession: (sessionId: string) => Promise<void> }) {
+  const [query, setQuery] = useState('')
+  const [confirmEnd, setConfirmEnd] = useState<GuestSessionRow | null>(null)
   const labels: Record<SessionFilter, string> = { all: 'Todas', online: 'Online', 'expiring-30': 'Expiram em 30 min', 'expiring-10': 'Expiram em 10 min', 'ended-today': 'Encerradas hoje' }
-  return <div className="admin-content"><Panel title="Sessoes" icon={<MonitorCheck />}><div className="segmented" role="tablist" aria-label="Filtro de sessoes">{Object.entries(labels).map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} type="button" onClick={() => onFilter(key as SessionFilter)}>{label}</button>)}</div><EmptyState message="Nenhuma lista detalhada de sessoes foi retornada pela API atual." /></Panel></div>
+  const rows = sessions.filter((session) => {
+    const blob = `${session.name ?? ''} ${session.clientMac} ${session.ssid ?? ''} ${session.site ?? ''} ${session.apMac ?? ''}`.toLowerCase()
+    const matchesQuery = !query || blob.includes(query.toLowerCase())
+    const remaining = session.remainingSeconds
+    const matchesFilter = filter === 'all'
+      || (filter === 'online' && session.status === 'authorized' && remaining > 0)
+      || (filter === 'expiring-30' && session.status === 'authorized' && remaining > 0 && remaining <= 1800)
+      || (filter === 'expiring-10' && session.status === 'authorized' && remaining > 0 && remaining <= 600)
+      || (filter === 'ended-today' && ['disconnected', 'expired'].includes(session.status))
+    return matchesQuery && matchesFilter
+  })
+  const requestEnd = async () => {
+    if (!confirmEnd) return
+    try {
+      await onEndSession(confirmEnd.id)
+      setConfirmEnd(null)
+    } catch {
+      return
+    }
+  }
+  return <div className="admin-content"><PageHeader title="Sessoes" description="Acompanhe acessos autorizados, encerrados e expirando pelo banco do portal." /><Panel title="Sessoes do portal" icon={<MonitorCheck />}><div className="table-toolbar"><input aria-label="Buscar sessao" placeholder="Buscar por dispositivo, MAC observado, SSID, site ou AP..." value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="segmented" role="tablist" aria-label="Filtro de sessoes">{Object.entries(labels).map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} type="button" onClick={() => onFilter(key as SessionFilter)}>{label}</button>)}</div>{feedback ? <p className={feedback.includes('sucesso') ? 'success session-action-feedback' : 'error session-action-feedback'} role="status">{feedback}</p> : null}{rows.length ? <div className="admin-table-wrap"><table className="admin-table sessions-table"><thead><tr><th>Dispositivo</th><th>Metodo</th><th>Site</th><th>SSID</th><th>Inicio</th><th>Expira</th><th>Restante</th><th>Status</th><th>Acoes</th></tr></thead><tbody>{rows.map((session) => <tr key={session.id}><td><strong>{session.name || session.clientMac}</strong><small>{session.clientMac}</small></td><td>{session.method}</td><td>{session.site || 'Nao disponivel'}</td><td>{session.ssid || 'Nao disponivel'}</td><td>{formatClock(session.authorizedAt || session.createdAt)}</td><td>{formatClock(session.expiresAt)}</td><td>{formatCountdown(session.remainingSeconds)}</td><td><StatusBadge status={session.status} remainingSeconds={session.remainingSeconds} /></td><td>{session.canEndAccess ? <button className="table-action danger" type="button" disabled={busy} onClick={() => setConfirmEnd(session)}>Encerrar</button> : <span className="muted-cell">Indisponivel</span>}</td></tr>)}</tbody></table></div> : <EmptyState message="Nenhuma sessao encontrada para os filtros atuais." />}</Panel>{confirmEnd ? <ConfirmDialog title="Encerrar acesso" message={`Esta acao encerra o acesso de ${confirmEnd.name || confirmEnd.clientMac} no UniFi. Continuar?`} busy={busy} onCancel={() => setConfirmEnd(null)} onConfirm={() => void requestEnd()} /> : null}</div>
 }
 
-function VisitorsPanel({ visitors }: { visitors: ClientRow[] }) {
+function StatusBadge({ status, remainingSeconds }: { status: string; remainingSeconds?: number }) {
+  const tone = status === 'authorized' && (remainingSeconds ?? 0) <= 600 ? 'critical' : status === 'authorized' ? 'ok' : status === 'expired' ? 'warning' : 'neutral'
+  const label = status === 'authorized' ? 'Autorizado' : status === 'expired' ? 'Expirado' : status === 'disconnected' ? 'Encerrado' : status
+  return <span className={`status-badge ${tone}`}>{label}</span>
+}
+function VisitorsPanel({ visitors, busy, onEndSession }: { visitors: ClientRow[]; busy: boolean; onEndSession: (sessionId: string) => Promise<void> }) {
   const [query, setQuery] = useState('')
   const [site, setSite] = useState('ALL')
   const [status, setStatus] = useState('ALL')
   const [selected, setSelected] = useState<ClientRow | null>(null)
-  const [ending, setEnding] = useState(false)
   const [confirmEnd, setConfirmEnd] = useState<ClientRow | null>(null)
+  const [feedback, setFeedback] = useState('')
   const sites = Array.from(new Set(visitors.map((row) => textValue(row, ['siteName', 'siteId'])).filter(Boolean)))
   const filtered = visitors.filter((row) => {
     const blob = JSON.stringify(row).toLowerCase()
@@ -673,19 +760,18 @@ function VisitorsPanel({ visitors }: { visitors: ClientRow[] }) {
   const endAccess = async (row: ClientRow) => {
     const sessionId = textValue(row, ['sessionId'])
     if (!sessionId) return
-    setEnding(true)
+    setFeedback('')
     try {
-      await api(`/api/admin/sessions/${encodeURIComponent(sessionId)}/end`, { method: 'POST' })
+      await onEndSession(sessionId)
+      setFeedback('Acesso encerrado com sucesso.')
       setConfirmEnd(null)
       setSelected(null)
-      window.location.reload()
-    } finally {
-      setEnding(false)
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Nao foi possivel encerrar o acesso.')
     }
   }
-  return <div className="admin-content"><Panel title="Usuarios e visitantes" icon={<UsersRound />}><div className="table-toolbar"><input aria-label="Buscar visitante" placeholder="Buscar por nome, MAC observado, IP, SSID, AP..." value={query} onChange={(event) => setQuery(event.target.value)} /><select aria-label="Filtrar por site" value={site} onChange={(event) => setSite(event.target.value)}><option value="ALL">Todos os sites</option>{sites.map((item) => <option key={item} value={item}>{item}</option>)}</select><select aria-label="Filtrar por status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="ALL">Todos os status</option><option value="authorized">Autorizado</option><option value="expired">Expirado</option><option value="disconnected">Encerrado</option></select></div>{filtered.length ? <div className="visitor-grid">{filtered.map((row, index) => <button className="visitor-card" key={textValue(row, ['id', 'mac']) || index} type="button" onClick={() => setSelected(row)}><div><strong>{textValue(row, ['name', 'hostname']) || 'Dispositivo sem nome'}</strong><span>{textValue(row, ['siteName']) || 'Site nao informado'} - {textValue(row, ['ssid']) || 'SSID indisponivel'}</span></div><dl><div><dt>MAC observado</dt><dd>{textValue(row, ['mac']) || '-'}</dd></div><div><dt>IP</dt><dd>{textValue(row, ['ip']) || '-'}</dd></div><div><dt>Status</dt><dd>{boolValue(row, 'authorized') ? 'Autorizado' : textValue(row, ['portalStatus', 'status']) || '-'}</dd></div><div><dt>Tempo restante</dt><dd>{row.remainingSeconds ? formatCountdown(Number(row.remainingSeconds)) : '-'}</dd></div></dl></button>)}</div> : <EmptyState message="Nenhum visitante encontrado." />}</Panel>{selected ? <ClientDrawer row={selected} onClose={() => setSelected(null)} onEnd={() => setConfirmEnd(selected)} /> : null}{confirmEnd ? <ConfirmDialog title="Encerrar acesso" message="Esta acao encerra o acesso deste visitante na UniFi. Continuar?" busy={ending} onCancel={() => setConfirmEnd(null)} onConfirm={() => void endAccess(confirmEnd)} /> : null}</div>
+  return <div className="admin-content"><Panel title="Usuarios e visitantes" icon={<UsersRound />}><div className="table-toolbar"><input aria-label="Buscar visitante" placeholder="Buscar por nome, MAC observado, IP, SSID, AP..." value={query} onChange={(event) => setQuery(event.target.value)} /><select aria-label="Filtrar por site" value={site} onChange={(event) => setSite(event.target.value)}><option value="ALL">Todos os sites</option>{sites.map((item) => <option key={item} value={item}>{item}</option>)}</select><select aria-label="Filtrar por status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="ALL">Todos os status</option><option value="authorized">Autorizado</option><option value="expired">Expirado</option><option value="disconnected">Encerrado</option></select></div>{feedback ? <p className={feedback.includes('sucesso') ? 'success session-action-feedback' : 'error session-action-feedback'} role="status">{feedback}</p> : null}{filtered.length ? <div className="visitor-grid">{filtered.map((row, index) => <button className="visitor-card" key={textValue(row, ['id', 'mac']) || index} type="button" onClick={() => setSelected(row)}><div><strong>{textValue(row, ['name', 'hostname']) || 'Dispositivo sem nome'}</strong><span>{textValue(row, ['siteName']) || 'Site nao informado'} - {textValue(row, ['ssid']) || 'SSID indisponivel'}</span></div><dl><div><dt>MAC observado</dt><dd>{textValue(row, ['mac']) || '-'}</dd></div><div><dt>IP</dt><dd>{textValue(row, ['ip']) || '-'}</dd></div><div><dt>Status</dt><dd>{boolValue(row, 'authorized') ? 'Autorizado' : textValue(row, ['portalStatus', 'status']) || '-'}</dd></div><div><dt>Tempo restante</dt><dd>{row.remainingSeconds ? formatCountdown(Number(row.remainingSeconds)) : '-'}</dd></div></dl></button>)}</div> : <EmptyState message="Nenhum visitante encontrado." />}</Panel>{selected ? <ClientDrawer row={selected} onClose={() => setSelected(null)} onEnd={() => setConfirmEnd(selected)} /> : null}{confirmEnd ? <ConfirmDialog title="Encerrar acesso" message="Esta acao encerra o acesso deste visitante na UniFi. Continuar?" busy={busy} onCancel={() => setConfirmEnd(null)} onConfirm={() => void endAccess(confirmEnd)} /> : null}</div>
 }
-
 function ClientDrawer({ row, onClose, onEnd }: { row: ClientRow; onClose: () => void; onEnd: () => void }) {
   return <div className="drawer-backdrop" role="presentation" onMouseDown={onClose}><aside className="detail-drawer" role="dialog" aria-modal="true" aria-label="Informacoes do dispositivo" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-head"><div><span>Informacoes do dispositivo</span><h2>{textValue(row, ['name', 'hostname']) || 'Dispositivo sem nome'}</h2></div><button type="button" aria-label="Fechar" onClick={onClose}><X /></button></div><div className="detail-list"><InfoLine label="MAC observado" value={textValue(row, ['mac'])} /><InfoLine label="IP" value={textValue(row, ['ip'])} /><InfoLine label="Site" value={textValue(row, ['siteName', 'siteId'])} /><InfoLine label="AP" value={textValue(row, ['apMac'])} /><InfoLine label="SSID" value={textValue(row, ['ssid'])} /><InfoLine label="Sinal" value={textValue(row, ['signal'])} /><InfoLine label="Metodo de autenticacao" value={textValue(row, ['authorizationMethod'])} /><InfoLine label="Autorizado em" value={formatClock(textValue(row, ['authorizedAt']))} /><InfoLine label="Expira em" value={formatClock(textValue(row, ['expiresAt']))} /><InfoLine label="Tempo restante" value={row.remainingSeconds ? formatCountdown(Number(row.remainingSeconds)) : ''} /></div>{boolValue(row, 'canEndAccess') ? <button className="danger-button" type="button" onClick={onEnd}>Encerrar acesso</button> : <p className="panel-note">Nenhuma acao UniFi disponivel para este registro.</p>}</aside></div>
 }
@@ -709,14 +795,14 @@ function ConfirmDialog({ title, message, busy, onCancel, onConfirm }: { title: s
   return <div className="modal-backdrop" role="presentation"><section className="confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title"><h2 id="confirm-title">{title}</h2><p>{message}</p><div className="confirm-actions"><button type="button" onClick={onCancel} disabled={busy}>Cancelar</button><button className="danger-button" type="button" onClick={onConfirm} disabled={busy}>{busy ? 'Encerrando...' : 'Encerrar acesso'}</button></div></section></div>
 }
 
-function AdminsPanel({ admin }: { admin: AdminMe | null }) {
-  return <div className="admin-content"><Panel title="Administradores" icon={<UserCog />}><div className="prepared-grid"><InfoTile title="Administrador atual" value={admin?.name ?? 'Sessao ativa'} detail={admin?.role ?? 'Role carregada pela API'} icon={<ShieldCheck />} /><InfoTile title="Gestao de administradores" value="Preparado" detail="Criacao, edicao e bloqueio exigem endpoint administrativo dedicado." icon={<KeyRound />} /></div></Panel></div>
+function AdminsPanel({ admin, admins }: { admin: AdminMe | null; admins: AdminUserRow[] }) {
+  const canManage = admin?.role === 'SUPERADMIN'
+  return <div className="admin-content"><PageHeader title="Administradores" description="Gerencie acesso administrativo com RBAC. Criacao e MFA exigem fluxo dedicado." action={canManage ? <button className="soft-button" type="button" disabled>+ Novo administrador</button> : null} /><Panel title="Administradores" icon={<UserCog />}>{admins.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Nome</th><th>Email</th><th>Role</th><th>Status</th><th>MFA</th><th>Ultimo login</th><th>Criado em</th></tr></thead><tbody>{admins.map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.email}</td><td>{row.role}</td><td>{row.status}</td><td>{row.mfa === 'not_configured' ? 'Nao configurado' : row.mfa}</td><td>{formatClock(row.lastLogin)}</td><td>{formatClock(row.createdAt)}</td></tr>)}</tbody></table></div> : <EmptyState message={canManage ? 'Nenhum administrador adicional encontrado.' : 'Somente SUPERADMIN pode listar administradores.'} />}</Panel></div>
 }
 
-function SettingsPanel({ admin, maintenance }: { admin: AdminMe | null; maintenance: MaintenanceAdmin | null }) {
-  return <div className="admin-content"><Panel title="Configuracoes" icon={<Settings />}><div className="prepared-grid"><InfoTile title="Sessao segura" value="HttpOnly" detail="O painel continua usando cookies e CSRF do backend." icon={<LockKeyhole />} /><InfoTile title="Conta" value={admin?.email ?? 'Autenticada'} detail="Dados carregados de /api/admin/me." icon={<UserRound />} /><InfoTile title="Modo manutencao" value={maintenance?.maintenanceEnabled ? 'Ativo' : 'Inativo'} detail="Configuracao real carregada do backend." icon={<Clock />} /></div></Panel></div>
+function SettingsPanel({ admin, maintenance, appearance, saving, feedback, onChange, onSave }: { admin: AdminMe | null; maintenance: MaintenanceAdmin | null; appearance: PortalAppearance; saving: boolean; feedback: string; onChange: (value: PortalAppearance) => void; onSave: () => void }) {
+  return <div className="admin-content"><PageHeader title="Configuracoes" description="Edite o visual e os textos exibidos para quem acessa o Wi-Fi publico." /><section className="settings-layout"><Panel title="Visual do portal publico" icon={<Settings />}><div className="portal-preview" style={cssVars(appearance)}><div className="portal-brand mini"><div className="portal-brand-mark">{appearance.logoUrl ? <img src={appearance.logoUrl} alt="" /> : <ShieldCheck />}</div><div><span className="portal-eyebrow">{appearance.bannerText}</span><strong>{appearance.establishmentName}</strong><p>{appearance.welcomeText}</p></div></div><div className="preview-card"><strong>{appearance.networkName}</strong><span>{appearance.successMessage}</span></div></div><div className="panel-form settings-form"><label htmlFor="appearance-network">Nome da rede<input id="appearance-network" value={appearance.networkName} onChange={(event) => onChange({ ...appearance, networkName: event.target.value })} /></label><label htmlFor="appearance-establishment">Nome exibido<input id="appearance-establishment" value={appearance.establishmentName} onChange={(event) => onChange({ ...appearance, establishmentName: event.target.value })} /></label><label htmlFor="appearance-logo">URL do logo<input id="appearance-logo" value={appearance.logoUrl} onChange={(event) => onChange({ ...appearance, logoUrl: event.target.value })} placeholder="https://..." /></label><label htmlFor="appearance-color">Cor principal<div className="color-control"><input id="appearance-color" type="color" value={appearance.primaryColor} onChange={(event) => onChange({ ...appearance, primaryColor: event.target.value })} /><input aria-label="Cor principal em hexadecimal" value={appearance.primaryColor} onChange={(event) => onChange({ ...appearance, primaryColor: event.target.value })} /></div></label><label htmlFor="appearance-banner">Titulo da tela publica<input id="appearance-banner" value={appearance.bannerText} onChange={(event) => onChange({ ...appearance, bannerText: event.target.value })} /></label><label htmlFor="appearance-welcome">Texto de boas-vindas<textarea id="appearance-welcome" value={appearance.welcomeText} onChange={(event) => onChange({ ...appearance, welcomeText: event.target.value })} rows={3} /></label><label htmlFor="appearance-success">Mensagem de sucesso<textarea id="appearance-success" value={appearance.successMessage} onChange={(event) => onChange({ ...appearance, successMessage: event.target.value })} rows={3} /></label><label htmlFor="appearance-expired">Mensagem de reautenticacao<textarea id="appearance-expired" value={appearance.expiredMessage} onChange={(event) => onChange({ ...appearance, expiredMessage: event.target.value })} rows={3} /></label><label className="wide" htmlFor="appearance-terms">Termos de uso<textarea id="appearance-terms" value={appearance.termsText} onChange={(event) => onChange({ ...appearance, termsText: event.target.value })} rows={8} /></label><button className="primary admin-save" type="button" onClick={onSave} disabled={saving}>{saving ? 'Salvando...' : 'Salvar visual e termos'}</button>{feedback ? <p className={feedback.includes('sucesso') ? 'success' : 'error'} role="status">{feedback}</p> : null}</div></Panel><Panel title="Resumo seguro" icon={<LockKeyhole />}><div className="prepared-grid single"><InfoTile title="Sessao segura" value="HttpOnly" detail="O painel continua usando cookies e CSRF do backend." icon={<LockKeyhole />} /><InfoTile title="Conta" value={admin?.email ?? 'Autenticada'} detail="Dados carregados de /api/admin/me." icon={<UserRound />} /><InfoTile title="Modo manutencao" value={maintenance?.maintenanceEnabled ? 'Ativo' : 'Inativo'} detail="Configuracao real carregada do backend." icon={<Clock />} /></div></Panel></section></div>
 }
-
 function InfoTile({ title, value, detail, icon }: { title: string; value: string; detail: string; icon: ReactNode }) {
   return <article className="info-tile"><div className="metric-icon">{icon}</div><span>{title}</span><strong>{value}</strong><p>{detail}</p></article>
 }
@@ -730,26 +816,25 @@ function MaintenanceAdminPanel({ maintenance, saving, feedback, onChange, onSave
     <div className="admin-content">
       <section className="maintenance-editor" aria-labelledby="maintenance-title">
         <div className={`maintenance-status-card ${maintenance.maintenanceEnabled ? 'active' : ''}`}>
-          <div><span>Status do portal</span><strong>{maintenance.maintenanceEnabled ? 'Portal em manutencao' : 'Portal funcionando normalmente'}</strong><p>{maintenance.maintenanceScheduled ? `Inicio programado: ${formatClock(maintenance.maintenanceStartAt)}` : 'Alteracoes passam a valer conforme a janela configurada no backend.'}</p></div>
+          <div><span>Status do portal</span><strong>{maintenance.maintenanceEnabled ? 'Portal em manutencao' : 'Portal funcionando normalmente'}</strong><p>{maintenance.maintenanceScheduled ? `Inicio programado: ${formatClock(maintenance.maintenanceStartAt)}` : 'A manutencao pode ser imediata ou programada com inicio e termino.'}</p></div>
           <label className="switch" htmlFor="maintenance-enabled"><input id="maintenance-enabled" type="checkbox" checked={maintenance.maintenanceEnabled} onChange={(event) => onChange({ ...maintenance, maintenanceEnabled: event.target.checked })} /><span aria-hidden="true" /></label>
         </div>
-        <div className="panel-form">
-          <div className="section-heading"><h2 id="maintenance-title">Manutencao</h2><p>Controle a mensagem exibida aos visitantes durante indisponibilidade do portal.</p></div>
-          <label htmlFor="maintenance-field-title">Titulo<input id="maintenance-field-title" value={maintenance.maintenanceTitle} onChange={(event) => onChange({ ...maintenance, maintenanceTitle: event.target.value })} /></label>
-          <label htmlFor="maintenance-field-message">Mensagem<textarea id="maintenance-field-message" value={maintenance.maintenanceMessage} onChange={(event) => onChange({ ...maintenance, maintenanceMessage: event.target.value })} rows={5} /></label>
-          <div className="date-grid"><ReadonlyDate label="Inicio" value={maintenance.maintenanceStartAt} /><ReadonlyDate label="Fim" value={maintenance.maintenanceEndAt} /></div>
-          <button className="primary admin-save" type="button" onClick={onSave} disabled={saving}>{saving ? 'Salvando...' : 'Salvar alteracoes'}</button>
-          {feedback ? <p className={feedback.includes('sucesso') ? 'success' : 'error'} role="status">{feedback}</p> : null}
+        <div className="maintenance-grid">
+          <div className="panel-form">
+            <div className="section-heading"><h2 id="maintenance-title">Manutencao</h2><p>Controle a tela que aparece para visitantes durante uma janela de indisponibilidade.</p></div>
+            <label htmlFor="maintenance-field-title">Titulo<input id="maintenance-field-title" value={maintenance.maintenanceTitle} onChange={(event) => onChange({ ...maintenance, maintenanceTitle: event.target.value })} /></label>
+            <label htmlFor="maintenance-field-message">Mensagem<textarea id="maintenance-field-message" value={maintenance.maintenanceMessage} onChange={(event) => onChange({ ...maintenance, maintenanceMessage: event.target.value })} rows={5} /></label>
+            <div className="date-grid"><label htmlFor="maintenance-start">Inicio<input id="maintenance-start" type="datetime-local" value={datetimeLocal(maintenance.maintenanceStartAt)} onChange={(event) => onChange({ ...maintenance, maintenanceStartAt: fromDatetimeLocal(event.target.value) })} /></label><label htmlFor="maintenance-end">Termino<input id="maintenance-end" type="datetime-local" value={datetimeLocal(maintenance.maintenanceEndAt)} onChange={(event) => onChange({ ...maintenance, maintenanceEndAt: fromDatetimeLocal(event.target.value) })} /></label></div>
+            <label htmlFor="maintenance-image">Imagem da manutencao<input id="maintenance-image" value={maintenance.maintenanceImageUrl} onChange={(event) => onChange({ ...maintenance, maintenanceImageUrl: event.target.value })} placeholder="https://..." /></label>
+            <button className="primary admin-save" type="button" onClick={onSave} disabled={saving}>{saving ? 'Salvando...' : 'Salvar alteracoes'}</button>
+            {feedback ? <p className={feedback.includes('sucesso') ? 'success' : 'error'} role="status">{feedback}</p> : null}
+          </div>
+          <aside className="maintenance-preview"><span>Preview publico</span>{maintenance.maintenanceImageUrl ? <img src={maintenance.maintenanceImageUrl} alt="" /> : <Clock className="hero-icon" />}<strong>{maintenance.maintenanceTitle}</strong><p>{maintenance.maintenanceMessage}</p><small>{maintenance.maintenanceStartAt ? `Inicio: ${formatClock(maintenance.maintenanceStartAt)}` : 'Sem inicio programado.'}</small><small>{maintenance.maintenanceEndAt ? `Termino: ${formatClock(maintenance.maintenanceEndAt)}` : 'Sem termino definido.'}</small></aside>
         </div>
       </section>
     </div>
   )
 }
-
-function ReadonlyDate({ label, value }: { label: string; value?: string | null }) {
-  return <div className="readonly-date"><span>{label}</span><strong>{formatClock(value)}</strong></div>
-}
-
 function Panel({ title, icon, children, compact = false }: { title: string; icon: ReactNode; children: ReactNode; compact?: boolean }) {
   return <section className={`ops-panel ${compact ? 'compact' : ''}`}><div className="panel-title">{icon}<h2>{title}</h2></div>{children}</section>
 }

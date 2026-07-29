@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,13 +9,34 @@ from app.api.middleware import RequestContextMiddleware, SecurityHeadersMiddlewa
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.integrations.unifi import unifi_client
+from app.services.session_expirer import session_expirer_loop
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
-    yield
-    await unifi_client.close()
+    settings = get_settings()
+    stop_expirer = asyncio.Event()
+    expirer_task: asyncio.Task | None = None
+    if settings.session_expirer_enabled:
+        expirer_task = asyncio.create_task(
+            session_expirer_loop(
+                stop_event=stop_expirer,
+                interval_seconds=settings.session_expirer_interval_seconds,
+                batch_size=settings.session_expirer_batch_size,
+            )
+        )
+    try:
+        yield
+    finally:
+        stop_expirer.set()
+        if expirer_task:
+            expirer_task.cancel()
+            try:
+                await expirer_task
+            except asyncio.CancelledError:
+                pass
+        await unifi_client.close()
 
 
 def create_app() -> FastAPI:

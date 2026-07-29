@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 from datetime import UTC, datetime
 
 from fastapi import Cookie, Depends, Header, HTTPException, Request, status
@@ -58,5 +59,13 @@ def require_csrf(
 ) -> None:
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return
-    if not x_csrf_token or not csrf_cookie or not hashlib.sha256(x_csrf_token.encode()).hexdigest() == hashlib.sha256(csrf_cookie.encode()).hexdigest():
+    settings = get_settings()
+    origin = request.headers.get("origin")
+    if origin and origin not in settings.cors_origins:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Origem administrativa invalida.")
+    if not x_csrf_token or not csrf_cookie:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "CSRF invalido.")
+    expected = hashlib.sha256(csrf_cookie.encode()).hexdigest()
+    received = hashlib.sha256(x_csrf_token.encode()).hexdigest()
+    if not hmac.compare_digest(received, expected):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "CSRF invalido.")

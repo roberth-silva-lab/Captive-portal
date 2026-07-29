@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     rate_limit_max_attempts: int = Field(default=8, validation_alias="RATE_LIMIT_MAX_ATTEMPTS")
     provisional_access_minutes: int = Field(default=1, validation_alias="PROVISIONAL_ACCESS_MINUTES")
     auth_form_access_minutes: int = Field(default=5, validation_alias="AUTH_FORM_ACCESS_MINUTES")
+    session_expirer_enabled: bool = Field(default=True, validation_alias="SESSION_EXPIRER_ENABLED")
+    session_expirer_interval_seconds: int = Field(default=60, validation_alias="SESSION_EXPIRER_INTERVAL_SECONDS")
+    session_expirer_batch_size: int = Field(default=50, validation_alias="SESSION_EXPIRER_BATCH_SIZE")
 
     @property
     def is_production(self) -> bool:

@@ -13,6 +13,7 @@ os.environ["ALLOWED_ORIGINS"] = "https://portal.gabineteitinerante.com.br"
 os.environ["SMTP_HOST"] = "smtp.test"
 os.environ["SMTP_USER"] = "smtp@test"
 os.environ["SMTP_PASSWORD"] = "test"
+os.environ["SESSION_EXPIRER_ENABLED"] = "false"
 
 import pytest
 from fastapi.testclient import TestClient

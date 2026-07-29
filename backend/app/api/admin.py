@@ -1,5 +1,5 @@
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
@@ -19,6 +19,7 @@ from app.models import (
     GuestSession,
     MaintenanceConfig,
     PortalNotification,
+    PortalSetting,
     SessionStatus,
     SiteProfile,
     Voucher,
@@ -33,6 +34,8 @@ from app.schemas.admin import (
     NotificationAdminResponse,
     NotificationCreateRequest,
     NotificationUpdateRequest,
+    PortalAppearanceRequest,
+    PortalAppearanceResponse,
     SiteNode,
     VoucherCreateRequest,
     VoucherResponse,
@@ -40,9 +43,55 @@ from app.schemas.admin import (
 from app.security.passwords import verify_password
 from app.security.tokens import random_token_urlsafe, secret_hash
 from app.services.rate_limit import enforce_rate_limit, record_attempt
-from app.services.sessions import dashboard_counts, duration_between, expire_due_sessions, seconds_remaining
+from app.services.sessions import dashboard_counts, duration_between, seconds_remaining
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+PORTAL_APPEARANCE_DEFAULTS = {
+    "network_name": "Wi-Fi Visitante",
+    "establishment_name": "Gabinete Itinerante",
+    "logo_url": "",
+    "primary_color": "#176b87",
+    "banner_text": "Portal de Acesso Wi-Fi",
+    "welcome_text": "Conecte-se de forma segura a rede de visitantes.",
+    "success_message": "Acesso liberado. Voce ja pode navegar na Internet.",
+    "expired_message": "Sua sessao expirou. Autentique-se novamente para continuar usando o Wi-Fi.",
+    "terms_text": "Ao continuar, voce aceita os termos de uso da rede.",
+}
+
+
+def portal_setting_value(db: Session, key: str) -> str:
+    row = db.get(PortalSetting, key)
+    return row.value if row else PORTAL_APPEARANCE_DEFAULTS[key]
+
+
+def set_portal_setting(db: Session, key: str, value: str) -> None:
+    row = db.get(PortalSetting, key)
+    if not row:
+        row = PortalSetting(key=key)
+        db.add(row)
+    row.value = value
+
+
+def _portal_appearance(db: Session) -> PortalAppearanceResponse:
+    updated_raw = db.get(PortalSetting, "appearance_updated_at")
+    updated_at = None
+    if updated_raw and updated_raw.value:
+        try:
+            updated_at = datetime.fromisoformat(updated_raw.value)
+        except ValueError:
+            updated_at = None
+    return PortalAppearanceResponse(
+        networkName=portal_setting_value(db, "network_name"),
+        establishmentName=portal_setting_value(db, "establishment_name"),
+        logoUrl=portal_setting_value(db, "logo_url"),
+        primaryColor=portal_setting_value(db, "primary_color"),
+        bannerText=portal_setting_value(db, "banner_text"),
+        welcomeText=portal_setting_value(db, "welcome_text"),
+        successMessage=portal_setting_value(db, "success_message"),
+        expiredMessage=portal_setting_value(db, "expired_message"),
+        termsText=portal_setting_value(db, "terms_text"),
+        updatedAt=updated_at,
+    )
 
 
 def admin_out(admin: AdminUser) -> AdminMe:
@@ -209,7 +258,6 @@ def me(admin: AdminUser = Depends(current_admin)):
 
 @router.get("/dashboard", response_model=DashboardSummary)
 def dashboard(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
-    expire_due_sessions(db)
     now = utcnow()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     counts = dashboard_counts(db)
@@ -289,6 +337,33 @@ def list_vouchers(db: Session = Depends(get_db), _admin: AdminUser = Depends(req
     return [_voucher_out(v) for v in rows]
 
 
+
+@router.get("/portal-appearance", response_model=PortalAppearanceResponse)
+def get_portal_appearance(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    return _portal_appearance(db)
+
+
+@router.put("/portal-appearance", response_model=PortalAppearanceResponse, dependencies=[Depends(require_csrf)])
+def update_portal_appearance(payload: PortalAppearanceRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    before = _portal_appearance(db).model_dump(mode="json")
+    values = {
+        "network_name": payload.networkName,
+        "establishment_name": payload.establishmentName,
+        "logo_url": payload.logoUrl,
+        "primary_color": payload.primaryColor,
+        "banner_text": payload.bannerText,
+        "welcome_text": payload.welcomeText,
+        "success_message": payload.successMessage,
+        "expired_message": payload.expiredMessage,
+        "terms_text": payload.termsText,
+        "appearance_updated_at": utcnow().isoformat(),
+    }
+    for key, value in values.items():
+        set_portal_setting(db, key, value)
+    audit(db, admin, "portal_appearance.updated", "portal_settings", "appearance", {"before": before, "after": payload.model_dump(mode="json")})
+    db.commit()
+    return _portal_appearance(db)
+
 @router.get("/maintenance", response_model=MaintenanceAdminResponse)
 def get_maintenance(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
     return _maintenance_state(db.get(MaintenanceConfig, "global"))
@@ -356,6 +431,69 @@ def update_notification(notification_id: str, payload: NotificationUpdateRequest
     db.commit()
     db.refresh(row)
     return _notification_out(row)
+
+
+@router.get("/sessions")
+def list_sessions(q: str | None = None, status_filter: str | None = None, db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    query = select(GuestSession).order_by(GuestSession.created_at.desc()).limit(300)
+    sessions = db.scalars(query).all()
+    rows = []
+    needle = (q or "").strip().lower()
+    for session in sessions:
+        current_status = session.status.value.lower()
+        remaining = seconds_remaining(session)
+        if status_filter and status_filter != "all":
+            if status_filter == "online" and not (session.status == SessionStatus.AUTHORIZED and remaining > 0):
+                continue
+            if status_filter == "expiring-30" and not (session.status == SessionStatus.AUTHORIZED and 0 < remaining <= 1800):
+                continue
+            if status_filter == "expiring-10" and not (session.status == SessionStatus.AUTHORIZED and 0 < remaining <= 600):
+                continue
+            if status_filter == "ended" and current_status != "disconnected":
+                continue
+            if status_filter == "expired" and current_status != "expired":
+                continue
+        searchable = " ".join([session.client_mac, session.name or "", session.ssid or "", session.site or "", session.ap_mac or ""]).lower()
+        if needle and needle not in searchable:
+            continue
+        rows.append(
+            {
+                "id": session.id,
+                "name": session.name,
+                "clientMac": session.client_mac,
+                "apMac": session.ap_mac,
+                "ssid": session.ssid,
+                "site": session.site,
+                "method": session.authorization_method.value,
+                "status": current_status,
+                "createdAt": session.created_at,
+                "authorizedAt": session.authorized_at,
+                "expiresAt": session.expires_at,
+                "disconnectedAt": session.disconnected_at,
+                "remainingSeconds": remaining,
+                "durationSeconds": session.duration_seconds,
+                "canEndAccess": bool(session.site and session.unifi_client_id and session.status == SessionStatus.AUTHORIZED),
+            }
+        )
+    return rows
+
+
+@router.get("/admins")
+def list_admins(_admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN)), db: Session = Depends(get_db)):
+    rows = db.scalars(select(AdminUser).order_by(AdminUser.created_at.desc())).all()
+    return [
+        {
+            "id": row.id,
+            "name": row.name,
+            "email": row.email,
+            "role": row.role.value,
+            "status": "active" if row.is_active else "inactive",
+            "mfa": "not_configured",
+            "createdAt": row.created_at,
+            "lastLogin": None,
+        }
+        for row in rows
+    ]
 
 
 @router.get("/users")

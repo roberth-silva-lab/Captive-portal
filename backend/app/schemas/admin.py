@@ -95,6 +95,23 @@ class VoucherResponse(BaseModel):
     createdAt: datetime
 
 
+
+
+class PortalAppearanceRequest(BaseModel):
+    networkName: str = Field(default="Wi-Fi Visitante", min_length=1, max_length=160)
+    establishmentName: str = Field(default="Gabinete Itinerante", min_length=1, max_length=160)
+    logoUrl: str = Field(default="", max_length=2048)
+    primaryColor: str = Field(default="#176b87", pattern=r"^#[0-9a-fA-F]{6}$")
+    bannerText: str = Field(default="Portal de Acesso Wi-Fi", min_length=1, max_length=160)
+    welcomeText: str = Field(default="Conecte-se de forma segura a rede de visitantes.", min_length=1, max_length=300)
+    successMessage: str = Field(default="Acesso liberado. Voce ja pode navegar na Internet.", min_length=1, max_length=300)
+    expiredMessage: str = Field(default="Sua sessao expirou. Autentique-se novamente para continuar usando o Wi-Fi.", min_length=1, max_length=300)
+    termsText: str = Field(default="Ao continuar, voce aceita os termos de uso da rede.", min_length=1, max_length=8000)
+
+
+class PortalAppearanceResponse(PortalAppearanceRequest):
+    updatedAt: datetime | None = None
+
 class MaintenanceUpdateRequest(BaseModel):
     maintenanceEnabled: bool = False
     maintenanceTitle: str = Field(default="Portal em manutencao", min_length=1, max_length=160)
