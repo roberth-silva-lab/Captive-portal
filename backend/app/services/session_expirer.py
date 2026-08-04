@@ -11,10 +11,13 @@ from app.core.database import SessionLocal
 from app.integrations.unifi import UniFiClientRecord, UniFiError, unifi_client
 from app.models import AuditLog, GuestSession, SessionStatus
 from app.models.entities import utcnow
+from app.services.session_operations import is_not_found as _is_not_found
+from app.services.session_operations import is_transient as _is_transient
+from app.services.session_operations import resolve_current_unifi_client
 from app.services.sessions import comparable_now, duration_between
 
 logger = logging.getLogger(__name__)
-TRANSIENT_UNIFI_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,9 @@ class GuestUnauthorizer:
     async def unauthorize_guest(self, *, site_id: str, client_id: str) -> dict:
         return await unifi_client.unauthorize_guest(site_id=site_id, client_id=client_id)
 
+    async def authorize_guest(self, *, site_id: str, client_id: str, minutes: int) -> dict:
+        return await unifi_client.authorize_guest(site_id=site_id, client_id=client_id, minutes=minutes)
+
 
 def _audit(db: Session, event: str, session: GuestSession, metadata: dict[str, object] | None = None) -> None:
     db.add(
@@ -44,27 +50,14 @@ def _audit(db: Session, event: str, session: GuestSession, metadata: dict[str, o
     )
 
 
-def _is_not_found(exc: UniFiError) -> bool:
-    return exc.status_code == 404 or "not found" in str(exc).lower()
-
-
-def _is_transient(exc: BaseException) -> bool:
-    return isinstance(exc, TimeoutError) or (isinstance(exc, UniFiError) and exc.status_code in TRANSIENT_UNIFI_STATUS)
-
-
 def _mark_expired(db: Session, session: GuestSession, event: str = "session.expired", metadata: dict[str, object] | None = None) -> None:
     session.status = SessionStatus.EXPIRED
     session.duration_seconds = duration_between(session.authorized_at or session.created_at, session.expires_at or comparable_now(session.expires_at))
     _audit(db, event, session, metadata or {"site": session.site, "unifiConfirmed": bool(session.site)})
 
 
-async def _get_current_client(worker: GuestUnauthorizer, session: GuestSession) -> UniFiClientRecord | None:
-    try:
-        return await worker.get_current_client(site_id=session.site, client_mac=session.client_mac)
-    except UniFiError as exc:
-        if _is_not_found(exc):
-            return None
-        raise
+async def _get_current_client(worker: GuestUnauthorizer, session: GuestSession, db: Session) -> UniFiClientRecord | None:
+    return await resolve_current_unifi_client(db, session, worker)
 
 
 async def _unauthorize_with_retry(worker: GuestUnauthorizer, *, site_id: str, client_id: str, attempts: int = 2) -> None:
@@ -108,7 +101,7 @@ async def expire_due_sessions_with_unifi(db: Session, unauthorizer: GuestUnautho
             db.commit()
             continue
         try:
-            current = await _get_current_client(worker, session)
+            current = await _get_current_client(worker, session, db)
             if current is None:
                 _mark_expired(db, session, "session.expired_client_not_found", {"site": session.site, "clientMac": session.client_mac})
                 expired += 1
@@ -130,7 +123,7 @@ async def expire_due_sessions_with_unifi(db: Session, unauthorizer: GuestUnautho
             except UniFiError as exc:
                 if not _is_not_found(exc):
                     raise
-                refreshed = await _get_current_client(worker, session)
+                refreshed = await _get_current_client(worker, session, db)
                 if refreshed is None or not refreshed.authorized:
                     _mark_expired(db, session, "session.expired_action_client_not_found", {"site": session.site, "clientId": current.id})
                     expired += 1
@@ -138,7 +131,7 @@ async def expire_due_sessions_with_unifi(db: Session, unauthorizer: GuestUnautho
                     continue
                 raise
 
-            confirmed = await _get_current_client(worker, session)
+            confirmed = await _get_current_client(worker, session, db)
             if confirmed is not None and confirmed.authorized:
                 failed += 1
                 _audit(db, "session.expire_unifi_still_authorized", session, {"site": session.site, "clientId": confirmed.id})

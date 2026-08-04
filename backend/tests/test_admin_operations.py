@@ -132,3 +132,123 @@ def test_admin_creates_updates_and_deletes_notification(client, admin_user):
     row = db.get(PortalNotification, notification_id)
     assert row is None
     db.close()
+
+def create_invite_and_token(client, monkeypatch, *, email="convite@example.com", site_ids=None):
+    monkeypatch.setattr("app.api.admin.send_email", lambda *args, **kwargs: None)
+    csrf = login_admin(client)
+    response = client.post(
+        "/api/admin/admins/invitations",
+        headers={"X-CSRF-Token": csrf},
+        json={"name": "Pessoa Convidada", "email": email, "role": "ADMIN", "siteIds": site_ids or ["Sede"]},
+    )
+    assert response.status_code == 200
+    invite = response.json()
+    token = invite["inviteUrl"].split("token=", 1)[1]
+    return invite, token
+
+
+def test_validate_admin_invitation_returns_safe_invite_summary(client, admin_user, monkeypatch):
+    _, token = create_invite_and_token(client, monkeypatch)
+
+    response = client.get(f"/api/admin/admins/invitations/validate?token={token}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {
+        "email": "convite@example.com",
+        "name": "Pessoa Convidada",
+        "role": "ADMIN",
+        "expiresAt": payload["expiresAt"],
+        "siteIds": ["Sede"],
+    }
+    assert token not in response.text
+
+
+def test_validate_admin_invitation_rejects_missing_token(client, admin_user):
+    response = client.get("/api/admin/admins/invitations/validate")
+
+    assert response.status_code == 400
+
+
+def test_accept_admin_invitation_accepts_snake_case_payload(client, admin_user, monkeypatch):
+    _, token = create_invite_and_token(client, monkeypatch, email="snake@example.com")
+
+    response = client.post(
+        "/api/admin/admins/invitations/accept",
+        json={"token": token, "password": "AnotherStrong123!", "confirm_password": "AnotherStrong123!", "accepted_policy": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "snake@example.com"
+
+
+def test_accept_admin_invitation_password_confirmation_mismatch_is_422(client, admin_user, monkeypatch):
+    _, token = create_invite_and_token(client, monkeypatch, email="mismatch@example.com")
+
+    response = client.post(
+        "/api/admin/admins/invitations/accept",
+        json={"token": token, "password": "AnotherStrong123!", "confirmPassword": "DifferentStrong123!", "acceptedPolicy": True},
+    )
+
+    assert response.status_code == 422
+    assert token not in response.text
+
+
+def test_accept_admin_invitation_used_token_returns_409(client, admin_user, monkeypatch):
+    _, token = create_invite_and_token(client, monkeypatch, email="used@example.com")
+    first = client.post(
+        "/api/admin/admins/invitations/accept",
+        json={"token": token, "password": "AnotherStrong123!", "confirmPassword": "AnotherStrong123!", "acceptedPolicy": True},
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/api/admin/admins/invitations/accept",
+        json={"token": token, "password": "AnotherStrong123!", "confirmPassword": "AnotherStrong123!", "acceptedPolicy": True},
+    )
+
+    assert second.status_code == 409
+
+
+def test_superadmin_revokes_admin_invitation(client, admin_user, monkeypatch):
+    invite, token = create_invite_and_token(client, monkeypatch, email="revogar@example.com")
+    csrf = client.cookies.get("portal_csrf") or ""
+
+    revoked = client.post(f"/api/admin/admins/invitations/{invite['id']}/revoke", headers={"X-CSRF-Token": csrf})
+
+    assert revoked.status_code == 200
+    assert revoked.json()["deliveryStatus"] == "REVOKED"
+    rejected = client.get(f"/api/admin/admins/invitations/validate?token={token}")
+    assert rejected.status_code == 410
+
+
+def test_superadmin_renews_admin_invitation_with_new_token(client, admin_user, monkeypatch):
+    sent = []
+    monkeypatch.setattr("app.api.admin.send_email", lambda to_email, subject, text, html_body=None: sent.append((to_email, subject, text, html_body)))
+    csrf = login_admin(client)
+    created = client.post(
+        "/api/admin/admins/invitations",
+        headers={"X-CSRF-Token": csrf},
+        json={"name": "Pessoa Link", "email": "link@example.com", "role": "ADMIN", "siteIds": ["Sede"]},
+    )
+    assert created.status_code == 200
+    first = created.json()
+    old_token = first["inviteUrl"].split("token=", 1)[1]
+
+    renewed = client.post(f"/api/admin/admins/invitations/{first['id']}/renew", headers={"X-CSRF-Token": csrf})
+
+    assert renewed.status_code == 200
+    payload = renewed.json()
+    assert payload["inviteUrl"]
+    new_token = payload["inviteUrl"].split("token=", 1)[1]
+    assert new_token != old_token
+    assert sent
+
+    old_validation = client.get(f"/api/admin/admins/invitations/validate?token={old_token}")
+    assert old_validation.status_code == 404
+    accepted = client.post(
+        "/api/admin/admins/invitations/accept",
+        json={"token": new_token, "password": "AnotherStrong123!", "confirmPassword": "AnotherStrong123!", "acceptedPolicy": True},
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["email"] == "link@example.com"

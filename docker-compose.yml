@@ -11,6 +11,8 @@ services:
     security_opt:
       - no-new-privileges:true
     read_only: true
+    volumes:
+      - media_data:/data/media
     tmpfs:
       - /tmp:size=64m,mode=1777
     healthcheck:
@@ -68,5 +70,6 @@ networks:
         - subnet: 172.20.0.0/24
 
 volumes:
+  media_data:
   caddy_data:
   caddy_config:

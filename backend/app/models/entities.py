@@ -110,6 +110,12 @@ class GuestSession(Base):
     authorized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     disconnected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    ended_by: Mapped[str] = mapped_column(String(64), default="")
+    admin_end_reason: Mapped[str] = mapped_column(String(300), default="")
+    reauth_required_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    reauth_required_by: Mapped[str] = mapped_column(String(64), default="")
+    reauth_reason: Mapped[str] = mapped_column(String(300), default="")
     duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
     site: Mapped[str] = mapped_column(String(128), default="")
     ap_mac: Mapped[str] = mapped_column(String(32), default="", index=True)
@@ -154,6 +160,24 @@ class AuditLog(Base):
     metadata_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
+class AccessBlock(Base):
+    __tablename__ = "access_blocks"
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("blk"))
+    site_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    scope: Mapped[str] = mapped_column(String(16), default="SITE")
+    device_mac_hash: Mapped[str] = mapped_column(String(128), default="", index=True)
+    device_mac_label: Mapped[str] = mapped_column(String(32), default="")
+    visitor_id: Mapped[str | None] = mapped_column(ForeignKey("guest_sessions.id", ondelete="SET NULL"), nullable=True)
+    identity_fingerprint: Mapped[str] = mapped_column(String(128), default="", index=True)
+    reason: Mapped[str] = mapped_column(String(300))
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    revoked_by: Mapped[str] = mapped_column(String(64), default="")
+    revoke_reason: Mapped[str] = mapped_column(String(300), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 class EmailLoginCode(Base):
     __tablename__ = "email_login_codes"
@@ -193,6 +217,23 @@ class PasswordResetToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+class MediaAsset(Base):
+    __tablename__ = "media_assets"
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("med"))
+    asset_type: Mapped[str] = mapped_column(String(32), index=True)
+    original_filename: Mapped[str] = mapped_column(String(255), default="")
+    stored_filename: Mapped[str] = mapped_column(String(255), unique=True)
+    content_type: Mapped[str] = mapped_column(String(64))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    width: Mapped[int] = mapped_column(Integer, default=0)
+    height: Mapped[int] = mapped_column(Integer, default=0)
+    public_url: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(64), default="", index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    deleted_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
 
 class MaintenanceConfig(Base):
     __tablename__ = "maintenance_configs"

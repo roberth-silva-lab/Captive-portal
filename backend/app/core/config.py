@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     session_expirer_enabled: bool = Field(default=True, validation_alias="SESSION_EXPIRER_ENABLED")
     session_expirer_interval_seconds: int = Field(default=60, validation_alias="SESSION_EXPIRER_INTERVAL_SECONDS")
     session_expirer_batch_size: int = Field(default=50, validation_alias="SESSION_EXPIRER_BATCH_SIZE")
+    media_storage_path: str = Field(default="/data/media", validation_alias="MEDIA_STORAGE_PATH")
+    media_public_base_url: str = Field(default="/media", validation_alias="MEDIA_PUBLIC_BASE_URL")
+    media_max_logo_bytes: int = Field(default=2097152, validation_alias="MEDIA_MAX_LOGO_BYTES")
+    media_max_image_bytes: int = Field(default=5242880, validation_alias="MEDIA_MAX_IMAGE_BYTES")
 
     @property
     def is_production(self) -> bool:

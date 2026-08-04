@@ -55,6 +55,7 @@ def create_app() -> FastAPI:
         )
     app.include_router(health.router)
     app.include_router(public.router)
+    app.include_router(public.media_router)
     app.include_router(admin.router)
     return app
 

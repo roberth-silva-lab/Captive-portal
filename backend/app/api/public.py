@@ -3,6 +3,7 @@ from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import FileResponse
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,7 @@ from app.models import (
     EmailLoginCode,
     GuestSession,
     MaintenanceConfig,
+    MediaAsset,
     NotificationType,
     PortalNotification,
     PortalSetting,
@@ -38,12 +40,19 @@ from app.schemas.public import (
     VoucherAuthRequest,
 )
 from app.security.tokens import random_token_urlsafe, secret_hash
+from app.services.media_storage import LocalMediaStorage
 from app.services.rate_limit import enforce_rate_limit, record_attempt
+from app.services.session_operations import active_block_for_client
 from app.services.sessions import authorize_session, duration_between, seconds_remaining
 
 router = APIRouter(prefix="/api", tags=["public"])
+media_router = APIRouter(tags=["media"])
 EXPIRATION_WARNINGS = [30, 10, 5]
 
+
+def _ensure_client_not_blocked(db: Session, *, client_mac: str, site_id: str) -> None:
+    if active_block_for_client(db, client_mac=client_mac, site_id=site_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "O acesso deste dispositivo está temporariamente bloqueado.")
 
 def portal_setting(db: Session, key: str, default: str) -> str:
     row = db.get(PortalSetting, key)
@@ -118,6 +127,19 @@ def ensure_not_in_maintenance(db: Session, site_id: str | None = None) -> None:
 def _site_setting_value(row: PortalSiteSetting | None, attr: str, fallback: str) -> str:
     value = getattr(row, attr, "") if row else ""
     return value or fallback
+
+
+@media_router.get("/media/{media_id}")
+def get_media(media_id: str, db: Session = Depends(get_db)):
+    row = db.get(MediaAsset, media_id)
+    if not row or row.deleted_at:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Imagem não encontrada.")
+    path = LocalMediaStorage(get_settings()).public_path(row.stored_filename)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Imagem não encontrada.")
+    return FileResponse(path, media_type=row.content_type, filename=row.stored_filename, headers={"Cache-Control": "public, max-age=86400"})
+
+
 @router.get("/settings", response_model=PortalSettingsResponse)
 async def settings(site: str | None = None, clientMac: str | None = None, apMac: str | None = None, db: Session = Depends(get_db)):
     site_id = site
@@ -157,13 +179,20 @@ async def settings(site: str | None = None, clientMac: str | None = None, apMac:
         expirationWarningMinutes=EXPIRATION_WARNINGS,
     )
 
-async def _authorize_unifi(payload, minutes: int, data_limit_mb: int | None = None, download_limit: int | None = None, upload_limit: int | None = None, requested_site: str | None = None) -> tuple[str, str]:
+async def _authorize_unifi(db_or_payload, payload_or_minutes, minutes: int | None = None, data_limit_mb: int | None = None, download_limit: int | None = None, upload_limit: int | None = None, requested_site: str | None = None) -> tuple[str, str]:
+    db = db_or_payload if isinstance(db_or_payload, Session) else None
+    payload = payload_or_minutes if db is not None else db_or_payload
+    selected_minutes = minutes if db is not None else int(payload_or_minutes)
+    if selected_minutes is None:
+        raise UniFiError("Duracao de autorizacao ausente.")
     context = await unifi_client.resolve_client_context(
         client_mac=payload.clientMac,
         ap_mac=payload.apMac,
         requested_site=requested_site,
     )
-    await unifi_client.authorize_guest(site_id=context.site_id, client_id=context.client_id, minutes=minutes, data_limit_mb=data_limit_mb, rx_kbps=download_limit, tx_kbps=upload_limit)
+    if db is not None:
+        _ensure_client_not_blocked(db, client_mac=payload.clientMac, site_id=context.site_id)
+    await unifi_client.authorize_guest(site_id=context.site_id, client_id=context.client_id, minutes=selected_minutes, data_limit_mb=data_limit_mb, rx_kbps=download_limit, tx_kbps=upload_limit)
     confirmed = await unifi_client.get_client_by_mac(context.site_id, payload.clientMac)
     if not confirmed.authorized:
         raise UniFiError("UniFi nao confirmou authorized=true para o cliente.")
@@ -205,6 +234,7 @@ async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Sessio
     if voucher_site and voucher_site not in {context.site_id, context.site_name}:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "site_mismatch")
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Este voucher nao e valido para esta unidade.")
+    _ensure_client_not_blocked(db, client_mac=payload.clientMac, site_id=context.site_id)
     used_devices = db.scalars(select(GuestSession.client_mac).where(GuestSession.voucher_id == voucher.id).distinct()).all()
     max_devices = voucher.max_devices or voucher.device_limit
     if payload.clientMac not in used_devices and len(used_devices) >= max_devices:
@@ -232,7 +262,7 @@ async def auth_cpf(payload: CpfAuthRequest, request: Request, db: Session = Depe
     ip = client_ip(request)
     enforce_rate_limit(db, payload.clientMac, ip, "cpf")
     try:
-        site_id, client_id = await _authorize_unifi(payload, 60)
+        site_id, client_id = await _authorize_unifi(db, payload, 60)
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "cpf", False, "unifi_error")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel confirmar a autorizacao no UniFi.") from exc
@@ -278,7 +308,7 @@ async def verify_email_code(payload: EmailCodeVerify, request: Request, db: Sess
     row.consumed_at = utcnow()
     db.commit()
     try:
-        site_id, client_id = await _authorize_unifi(payload, 60)
+        site_id, client_id = await _authorize_unifi(db, payload, 60)
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "email-verify", False, "unifi_error")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel confirmar a autorizacao no UniFi.") from exc
@@ -292,7 +322,7 @@ async def _provisional(payload: ProvisionalAccessRequest, request: Request, db: 
     ip = client_ip(request)
     enforce_rate_limit(db, payload.clientMac, ip, method, max_attempts=8)
     try:
-        site_id, client_id = await _authorize_unifi(payload, minutes)
+        site_id, client_id = await _authorize_unifi(db, payload, minutes)
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, method, False, "unifi_error")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel confirmar acesso provisorio no UniFi.") from exc

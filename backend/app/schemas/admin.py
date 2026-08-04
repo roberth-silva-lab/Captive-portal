@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import AliasChoices, BaseModel, EmailStr, Field, field_validator
 
 from app.models import AdminRole, NotificationType
 
@@ -42,11 +42,23 @@ class AdminInviteResponse(BaseModel):
     siteIds: list[str] = Field(default_factory=list)
 
 
+class AdminInviteValidateResponse(BaseModel):
+    email: EmailStr
+    name: str
+    role: AdminRole
+    expiresAt: datetime
+    siteIds: list[str] = Field(default_factory=list)
+
 class AdminInviteAcceptRequest(BaseModel):
     token: str = Field(min_length=32, max_length=256)
     password: str = Field(min_length=12, max_length=128)
-    confirmPassword: str = Field(min_length=12, max_length=128)
-    acceptedPolicy: bool
+    confirmPassword: str = Field(validation_alias=AliasChoices("confirmPassword", "confirm_password"), min_length=12, max_length=128)
+    acceptedPolicy: bool = Field(validation_alias=AliasChoices("acceptedPolicy", "accepted_policy"))
+
+    @field_validator("token")
+    @classmethod
+    def clean_token(cls, value: str) -> str:
+        return value.strip()
 
     @field_validator("confirmPassword")
     @classmethod
@@ -62,6 +74,44 @@ class AdminInviteAcceptRequest(BaseModel):
             raise ValueError("É necessário aceitar a política administrativa.")
         return value
 
+class SessionActionRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=300)
+
+
+class SessionExtendRequest(SessionActionRequest):
+    additionalMinutes: int = Field(gt=0, le=1440)
+
+
+class SessionReauthorizeRequest(SessionActionRequest):
+    durationMinutes: int = Field(gt=0, le=1440)
+
+
+class SessionBlockRequest(SessionActionRequest):
+    scope: str = Field(default="SITE", pattern="^(SITE|GLOBAL)$")
+    durationMinutes: int | None = Field(default=None, gt=0, le=525600)
+
+
+class SessionOperationResponse(BaseModel):
+    status: str
+    unifiConfirmed: bool
+    message: str
+    sessionId: str
+    operationState: str
+    blockId: str | None = None
+    newSessionId: str | None = None
+    expiresAt: datetime | None = None
+
+
+class AccessBlockResponse(BaseModel):
+    id: str
+    scope: str
+    siteId: str | None = None
+    deviceMacLabel: str
+    reason: str
+    startsAt: datetime
+    expiresAt: datetime | None = None
+    revokedAt: datetime | None = None
+    createdBy: str
 
 class DashboardSummary(BaseModel):
     connectedNow: int
@@ -164,7 +214,7 @@ class PortalAppearanceRequest(BaseModel):
     welcomeText: str = Field(default="Conecte-se de forma segura à rede de visitantes.", min_length=1, max_length=300)
     successMessage: str = Field(default="Acesso liberado. Você já pode navegar na Internet.", min_length=1, max_length=300)
     expiredMessage: str = Field(default="Sua sessão expirou. Autentique-se novamente para continuar usando o Wi-Fi.", min_length=1, max_length=300)
-    termsText: str = Field(default="Ao continuar, você aceita os termos de uso da rede.", min_length=1, max_length=8000)
+    termsText: str = Field(default="Ao continuar, Você aceita os termos de uso da rede.", min_length=1, max_length=8000)
 
 
 class PortalAppearanceResponse(PortalAppearanceRequest):
@@ -202,6 +252,20 @@ class MaintenanceAdminResponse(BaseModel):
     maintenanceImageUrl: str = ""
     maintenanceVisualConfig: dict[str, Any] = Field(default_factory=dict)
     updatedAt: datetime | None = None
+
+
+
+
+class MediaAssetResponse(BaseModel):
+    id: str
+    assetType: str
+    originalFilename: str
+    contentType: str
+    byteSize: int
+    width: int
+    height: int
+    publicUrl: str
+    createdAt: datetime
 
 
 class NotificationCreateRequest(BaseModel):

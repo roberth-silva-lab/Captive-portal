@@ -18,10 +18,12 @@ export type Voucher = { id: string; codeLabel: string; description: string; stat
 export type CreatedVoucherCode = { id: string; code: string; codeLabel: string; site: string; durationMinutes: number; expiresAt?: string | null }
 export type VoucherBatchCreateResponse = { created: number; vouchers: CreatedVoucherCode[] }
 export type AdminInviteResponse = { id: string; email: string; name: string; role: string; siteIds: string[]; expiresAt: string; acceptedAt?: string | null; revokedAt?: string | null; deliveryStatus: string; inviteUrl?: string | null }
+export type AdminInviteValidateResponse = { email: string; name: string; role: string; expiresAt: string; siteIds: string[] }
 export type ClientRow = Record<string, unknown>
 export type AccessPoint = Record<string, unknown>
-export type GuestSessionRow = { id: string; name?: string; clientMac: string; apMac?: string; ssid?: string; site?: string; method: string; status: string; createdAt: string; authorizedAt?: string | null; expiresAt?: string | null; disconnectedAt?: string | null; remainingSeconds: number; durationSeconds: number; canEndAccess: boolean }
+export type GuestSessionRow = { id: string; name?: string; clientMac: string; apMac?: string; ssid?: string; site?: string; method: string; status: string; createdAt: string; authorizedAt?: string | null; expiresAt?: string | null; disconnectedAt?: string | null; endedAt?: string | null; endedBy?: string; adminEndReason?: string; reauthRequiredAt?: string | null; reauthReason?: string; remainingSeconds: number; durationSeconds: number; canEndAccess: boolean; canRequireReauth?: boolean; canExtend?: boolean; canReauthorize?: boolean; canBlock?: boolean }
 export type AdminUserRow = { id: string; name: string; email: string; role: string; status: string; mfa: string; siteIds?: string[]; canSelectAllSites?: boolean; createdAt: string; lastLogin?: string | null }
+export type SessionOperationResponse = { status: string; unifiConfirmed: boolean; message: string; sessionId: string; operationState: string; blockId?: string | null; newSessionId?: string | null; expiresAt?: string | null }
 
 export type Method = 'voucher' | 'cpf' | 'email'
 export type Stage = 'idle' | 'validating' | 'authorizing' | 'confirming' | 'checking' | 'released' | 'error'
@@ -29,3 +31,5 @@ export type AdminSection = 'dashboard' | 'sessions' | 'visitors' | 'vouchers' | 
 export type SessionFilter = 'all' | 'online' | 'expiring-30' | 'expiring-10' | 'ended-today'
 export type PreviewDevice = 'mobile' | 'tablet' | 'desktop'
 export type PreviewState = 'initial' | 'voucher' | 'cpf' | 'email' | 'code-sent' | 'released' | 'maintenance' | 'notice'
+
+export type MediaAsset = { id: string; assetType: string; originalFilename: string; contentType: string; byteSize: number; width: number; height: number; publicUrl: string; createdAt: string }

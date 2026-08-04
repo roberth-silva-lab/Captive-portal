@@ -3,7 +3,7 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,7 @@ from app.models import (
     AuthAttempt,
     GuestSession,
     MaintenanceConfig,
+    MediaAsset,
     PortalNotification,
     PortalSetting,
     PortalSiteSetting,
@@ -34,6 +35,7 @@ from app.schemas.admin import (
     AdminInviteAcceptRequest,
     AdminInviteCreate,
     AdminInviteResponse,
+    AdminInviteValidateResponse,
     AdminLoginRequest,
     AdminMe,
     AdminSiteAccessUpdateRequest,
@@ -42,6 +44,7 @@ from app.schemas.admin import (
     DashboardSummary,
     MaintenanceAdminResponse,
     MaintenanceUpdateRequest,
+    MediaAssetResponse,
     NotificationAdminResponse,
     NotificationCreateRequest,
     NotificationUpdateRequest,
@@ -49,6 +52,11 @@ from app.schemas.admin import (
     PortalAppearanceResponse,
     PortalSiteAppearanceRequest,
     PortalSiteAppearanceResponse,
+    SessionActionRequest,
+    SessionBlockRequest,
+    SessionExtendRequest,
+    SessionOperationResponse,
+    SessionReauthorizeRequest,
     SiteNode,
     VoucherBatchCreateResponse,
     VoucherCreateRequest,
@@ -56,8 +64,17 @@ from app.schemas.admin import (
 )
 from app.security.passwords import hash_password, verify_password
 from app.security.tokens import random_token_urlsafe, secret_hash
+from app.services.media_storage import LocalMediaStorage
 from app.services.rate_limit import enforce_rate_limit, record_attempt
-from app.services.sessions import dashboard_counts, duration_between, seconds_remaining
+from app.services.session_operations import (
+    block_session_identity,
+    end_session,
+    extend_session,
+    reauthorize_session,
+    require_reauthentication,
+    unblock_identity,
+)
+from app.services.sessions import dashboard_counts, seconds_remaining
 from app.services.site_access import (
     allowed_site_ids,
     ensure_site_access,
@@ -142,6 +159,38 @@ def _portal_site_appearance(db: Session, site_id: str, site_name: str | None = N
         termsText=(row.terms_text if row and row.terms_text else base.termsText),
         updatedAt=(row.updated_at if row else base.updatedAt),
     )
+
+def _now_for_expires_at(expires_at: datetime) -> datetime:
+    now = utcnow()
+    if expires_at.tzinfo is None:
+        return now.replace(tzinfo=None)
+    return now
+
+
+def _invite_delivery_status(invite: AdminInvitation) -> str:
+    now = _now_for_expires_at(invite.expires_at)
+    if invite.revoked_at:
+        return "REVOKED"
+    if invite.accepted_at:
+        return "ACCEPTED"
+    if invite.expires_at <= now:
+        return "EXPIRED"
+    return "PENDING"
+
+
+def _invite_for_token(db: Session, token: str) -> AdminInvitation:
+    cleaned = token.strip()
+    if not cleaned:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Link de convite inválido ou incompleto.")
+    invite = db.scalar(select(AdminInvitation).where(AdminInvitation.token_hash == secret_hash(cleaned)))
+    if not invite:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Convite inexistente.")
+    state = _invite_delivery_status(invite)
+    if state == "ACCEPTED":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Este convite já foi usado.")
+    if state in {"EXPIRED", "REVOKED"}:
+        raise HTTPException(status.HTTP_410_GONE, "Este convite expirou ou foi revogado.")
+    return invite
 def _invite_out(invite: AdminInvitation, delivery_status: str = "pending", invite_url: str | None = None) -> AdminInviteResponse:
     return AdminInviteResponse(
         id=invite.id,
@@ -203,7 +252,7 @@ def _maintenance_state(row: MaintenanceConfig | None) -> MaintenanceAdminRespons
     if (row and row.start_at and row.start_at.tzinfo is None) or (row and row.end_at and row.end_at.tzinfo is None):
         now = now.replace(tzinfo=None)
     if not row:
-        return MaintenanceAdminResponse(maintenanceEnabled=False, maintenanceActive=False, maintenanceScheduled=False, maintenanceTitle="Portal em manutencao", maintenanceMessage="Estamos realizando ajustes para melhorar o acesso.")
+        return MaintenanceAdminResponse(maintenanceEnabled=False, maintenanceActive=False, maintenanceScheduled=False, maintenanceTitle="Portal em manutenção", maintenanceMessage="Estamos realizando ajustes para melhorar o acesso.")
     started = row.start_at is None or row.start_at <= now
     not_ended = row.end_at is None or row.end_at > now
     return MaintenanceAdminResponse(
@@ -310,6 +359,21 @@ def _new_voucher_code() -> str:
 
 def _voucher_label(code: str) -> str:
     return code
+
+
+
+def _media_out(row: MediaAsset) -> MediaAssetResponse:
+    return MediaAssetResponse(
+        id=row.id,
+        assetType=row.asset_type,
+        originalFilename=row.original_filename,
+        contentType=row.content_type,
+        byteSize=row.byte_size,
+        width=row.width,
+        height=row.height,
+        publicUrl=row.public_url,
+        createdAt=row.created_at,
+    )
 
 def _notification_out(row: PortalNotification) -> NotificationAdminResponse:
     return NotificationAdminResponse(id=row.id, type=row.type, title=row.title, message=row.message, startsAt=row.starts_at, endsAt=row.ends_at, site=row.site, enabled=row.enabled, createdAt=row.created_at, updatedAt=row.updated_at)
@@ -513,6 +577,51 @@ def revoke_voucher(voucher_id: str, db: Session = Depends(get_db), admin: AdminU
     db.commit()
     db.refresh(voucher)
     return _voucher_out(voucher)
+
+
+
+
+@router.post("/media", response_model=MediaAssetResponse, dependencies=[Depends(require_csrf)])
+async def upload_media(
+    request: Request,
+    assetType: str = Form(default="logo"),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(require_role(AdminRole.ADMIN)),
+):
+    enforce_rate_limit(db, f"media:{admin.id}", client_ip(request), "admin-media-upload", max_attempts=30)
+    stored = await LocalMediaStorage(get_settings()).store_upload(file, asset_type=assetType)
+    row = MediaAsset(
+        id=stored.id,
+        asset_type=stored.asset_type,
+        original_filename=stored.original_filename,
+        stored_filename=stored.stored_filename,
+        content_type=stored.content_type,
+        byte_size=stored.byte_size,
+        width=stored.width,
+        height=stored.height,
+        public_url=stored.public_url,
+        created_by=admin.id,
+        created_at=utcnow(),
+    )
+    db.add(row)
+    audit(db, admin, "media.uploaded", "media", row.id, {"assetType": row.asset_type, "contentType": row.content_type, "byteSize": row.byte_size, "width": row.width, "height": row.height})
+    db.commit()
+    db.refresh(row)
+    return _media_out(row)
+
+
+@router.delete("/media/{media_id}", dependencies=[Depends(require_csrf)])
+def delete_media(media_id: str, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    row = db.get(MediaAsset, media_id)
+    if not row or row.deleted_at:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Imagem não encontrada.")
+    row.deleted_at = utcnow()
+    row.deleted_by = admin.id
+    LocalMediaStorage(get_settings()).delete(row.stored_filename)
+    audit(db, admin, "media.deleted", "media", row.id, {"assetType": row.asset_type})
+    db.commit()
+    return {"deleted": True, "id": row.id}
 
 
 @router.get("/portal-appearance", response_model=PortalAppearanceResponse)
@@ -749,9 +858,18 @@ def list_sessions(siteId: str | None = None, q: str | None = None, status_filter
                 "authorizedAt": session.authorized_at,
                 "expiresAt": session.expires_at,
                 "disconnectedAt": session.disconnected_at,
+                "endedAt": session.ended_at,
+                "endedBy": session.ended_by,
+                "adminEndReason": session.admin_end_reason,
+                "reauthRequiredAt": session.reauth_required_at,
+                "reauthReason": session.reauth_reason,
                 "remainingSeconds": remaining,
                 "durationSeconds": session.duration_seconds,
-                "canEndAccess": bool(session.site and session.unifi_client_id and session.status == SessionStatus.AUTHORIZED),
+                "canEndAccess": bool(session.site and session.status == SessionStatus.AUTHORIZED),
+                "canRequireReauth": bool(session.site and session.status == SessionStatus.AUTHORIZED),
+                "canExtend": bool(session.site and session.status == SessionStatus.AUTHORIZED and remaining > 0),
+                "canReauthorize": bool(session.site and session.status != SessionStatus.AUTHORIZED),
+                "canBlock": bool(session.site and session.client_mac),
             }
         )
     return rows
@@ -784,21 +902,72 @@ def create_admin_invitation(payload: AdminInviteCreate, db: Session = Depends(ge
 @router.get("/admins/invitations", response_model=list[AdminInviteResponse])
 def list_admin_invitations(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN))):
     rows = db.scalars(select(AdminInvitation).order_by(AdminInvitation.created_at.desc()).limit(100)).all()
-    return [_invite_out(row) for row in rows]
+    return [_invite_out(row, _invite_delivery_status(row)) for row in rows]
+
+
+
+
+
+
+@router.post("/admins/invitations/{invite_id}/revoke", response_model=AdminInviteResponse, dependencies=[Depends(require_csrf)])
+def revoke_admin_invitation(invite_id: str, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN))):
+    invite = db.get(AdminInvitation, invite_id)
+    if not invite:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Convite não encontrado.")
+    if invite.accepted_at:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Convite já utilizado não pode ser revogado.")
+    if not invite.revoked_at:
+        invite.revoked_at = utcnow()
+        audit(db, admin, "admin_invitation.revoked", "admin_invitation", invite.id, {"email": invite.email, "role": invite.role})
+        db.commit()
+        db.refresh(invite)
+    return _invite_out(invite, _invite_delivery_status(invite))
+
+
+@router.post("/admins/invitations/{invite_id}/renew", response_model=AdminInviteResponse, dependencies=[Depends(require_csrf)])
+def renew_admin_invitation(invite_id: str, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN))):
+    invite = db.get(AdminInvitation, invite_id)
+    if not invite:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Convite não encontrado.")
+    if invite.accepted_at:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Convite já utilizado não pode gerar novo link.")
+    raw_token = random_token_urlsafe(48)
+    invite.token_hash = secret_hash(raw_token)
+    invite.expires_at = utcnow() + timedelta(hours=24)
+    invite.revoked_at = None
+    invite_url = _invite_url(raw_token)
+    delivery_status = "sent"
+    try:
+        text_body, html_body = admin_invitation_email(invite.name, invite_url, 24)
+        send_email(invite.email, "Convite para administrar o Portal Wi-Fi", text_body, html_body)
+    except EmailDeliveryError:
+        delivery_status = "email_failed"
+    audit(db, admin, "admin_invitation.renewed", "admin_invitation", invite.id, {"email": invite.email, "role": invite.role})
+    db.commit()
+    db.refresh(invite)
+    return _invite_out(invite, delivery_status, invite_url)
+
+
+@router.get("/admins/invitations/validate", response_model=AdminInviteValidateResponse)
+def validate_admin_invitation(token: str = Query(default="", max_length=256), db: Session = Depends(get_db)):
+    invite = _invite_for_token(db, token)
+    return AdminInviteValidateResponse(
+        email=invite.email,
+        name=invite.name,
+        role=AdminRole(invite.role),
+        expiresAt=invite.expires_at,
+        siteIds=invitation_sites(invite.permitted_site_ids_json),
+    )
 
 
 @router.post("/admins/invitations/accept", response_model=AdminMe)
 def accept_admin_invitation(payload: AdminInviteAcceptRequest, db: Session = Depends(get_db)):
-    invite = db.scalar(select(AdminInvitation).where(AdminInvitation.token_hash == secret_hash(payload.token)))
-    now = utcnow()
-    if not invite:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Convite inválido ou expirado.")
-    expires_at = invite.expires_at
-    if expires_at.tzinfo is None:
-        now = now.replace(tzinfo=None)
-    if invite.revoked_at or invite.accepted_at or expires_at <= now:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Convite inválido ou expirado.")
+    invite = _invite_for_token(db, payload.token)
+    now = _now_for_expires_at(invite.expires_at)
     admin = db.get(AdminUser, invite.admin_id) if invite.admin_id else None
+    existing = db.scalar(select(AdminUser).where(AdminUser.email == invite.email, AdminUser.id != invite.admin_id))
+    if existing:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Administrador já existe para este e-mail.")
     if not admin:
         admin = AdminUser(email=invite.email, name=invite.name, role=AdminRole(invite.role), password_hash=hash_password(payload.password), is_active=True)
         db.add(admin)
@@ -911,30 +1080,53 @@ async def list_access_points(siteId: str | None = None, db: Session = Depends(ge
     return rows
 
 
-@router.post("/sessions/{session_id}/end", dependencies=[Depends(require_csrf)])
-async def end_guest_session(session_id: str, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
-    session = db.get(GuestSession, session_id)
-    if session:
-        ensure_site_access(db, admin, session.site)
-    if not session:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sessao nao encontrada.")
-    if not session.site or not session.unifi_client_id:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sessao sem contexto UniFi para encerramento.")
-    await unifi_client.unauthorize_guest(site_id=session.site, client_id=session.unifi_client_id)
-    try:
-        confirmed = await unifi_client.get_client_by_mac(session.site, session.client_mac)
-        if confirmed.authorized:
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "UniFi ainda informa cliente autorizado.")
-    except UniFiError as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel confirmar encerramento no UniFi.") from exc
-    now = utcnow()
-    session.status = SessionStatus.DISCONNECTED
-    session.disconnected_at = now
-    session.duration_seconds = duration_between(session.authorized_at or session.created_at, now)
-    audit(db, admin, "session.ended", "guest_session", session.id, {"site": session.site})
-    db.commit()
-    return {"ok": True}
+def _operation_response(session_id: str, result) -> SessionOperationResponse:
+    return SessionOperationResponse(
+        status=result.status,
+        unifiConfirmed=result.unifi_confirmed,
+        message=result.message,
+        sessionId=session_id,
+        operationState=result.operation_state,
+        blockId=result.block_id,
+        newSessionId=result.new_session_id,
+        expiresAt=result.expires_at,
+    )
 
+
+@router.post("/sessions/{session_id}/end", response_model=SessionOperationResponse, dependencies=[Depends(require_csrf)])
+async def end_guest_session(session_id: str, payload: SessionActionRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    result = await end_session(db, session_id=session_id, admin=admin, reason=payload.reason)
+    return _operation_response(session_id, result)
+
+
+@router.post("/sessions/{session_id}/require-reauthentication", response_model=SessionOperationResponse, dependencies=[Depends(require_csrf)])
+async def require_guest_reauthentication(session_id: str, payload: SessionActionRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    result = await require_reauthentication(db, session_id=session_id, admin=admin, reason=payload.reason)
+    return _operation_response(session_id, result)
+
+
+@router.post("/sessions/{session_id}/extend", response_model=SessionOperationResponse, dependencies=[Depends(require_csrf)])
+async def extend_guest_session(session_id: str, payload: SessionExtendRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    result = await extend_session(db, session_id=session_id, admin=admin, additional_minutes=payload.additionalMinutes, reason=payload.reason)
+    return _operation_response(session_id, result)
+
+
+@router.post("/sessions/{session_id}/reauthorize", response_model=SessionOperationResponse, dependencies=[Depends(require_csrf)])
+async def reauthorize_guest_session(session_id: str, payload: SessionReauthorizeRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    result = await reauthorize_session(db, session_id=session_id, admin=admin, duration_minutes=payload.durationMinutes, reason=payload.reason)
+    return _operation_response(session_id, result)
+
+
+@router.post("/sessions/{session_id}/block", response_model=SessionOperationResponse, dependencies=[Depends(require_csrf)])
+async def block_guest_session(session_id: str, payload: SessionBlockRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    result = await block_session_identity(db, session_id=session_id, admin=admin, scope=payload.scope, duration_minutes=payload.durationMinutes, reason=payload.reason)
+    return _operation_response(session_id, result)
+
+
+@router.post("/blocks/{block_id}/revoke", response_model=SessionOperationResponse, dependencies=[Depends(require_csrf)])
+def revoke_access_block(block_id: str, payload: SessionActionRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    result = unblock_identity(db, block_id=block_id, admin=admin, reason=payload.reason)
+    return _operation_response(block_id, result)
 
 @router.get("/dashboard/charts")
 def dashboard_charts(_admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):

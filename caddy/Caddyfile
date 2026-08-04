@@ -16,6 +16,9 @@ portal.gabineteitinerante.com.br {
   handle /api/* {
     reverse_proxy backend:8000
   }
+  handle /media/* {
+    reverse_proxy backend:8000
+  }
   handle /health/* {
     reverse_proxy backend:8000
   }
@@ -25,6 +28,9 @@ portal.gabineteitinerante.com.br {
 portal-system.gabineteitinerante.com.br {
   import security_headers
   handle /api/* {
+    reverse_proxy backend:8000
+  }
+  handle /media/* {
     reverse_proxy backend:8000
   }
   handle /health/* {
