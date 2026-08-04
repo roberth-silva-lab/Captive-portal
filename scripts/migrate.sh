@@ -17,4 +17,10 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
-docker compose run --rm -T backend sh -lc 'cd /app && alembic upgrade head'
+migration_command='cd /app && alembic upgrade head && current="$(alembic current | awk "{print \$1}")" && head="$(alembic heads | awk "{print \$1}")" && alembic current && alembic heads && test "$current" = "$head"'
+
+if [[ -n "$(docker compose ps --status running -q backend 2>/dev/null)" ]]; then
+  docker compose exec -T backend sh -lc "$migration_command"
+else
+  docker compose run --rm -T backend sh -lc "$migration_command"
+fi

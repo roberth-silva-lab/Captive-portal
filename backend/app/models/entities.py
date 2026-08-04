@@ -53,10 +53,6 @@ class AdminUser(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[AdminRole] = mapped_column(Enum(AdminRole), default=AdminRole.VIEWER)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    description: Mapped[str] = mapped_column(String(240), default="")
-    created_by: Mapped[str] = mapped_column(String(64), default="", index=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
-    revoked_by: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -259,5 +255,3 @@ class PortalSetting(Base):
     __tablename__ = "portal_settings"
     key: Mapped[str] = mapped_column(String(96), primary_key=True)
     value: Mapped[str] = mapped_column(Text, default="")
-
-
