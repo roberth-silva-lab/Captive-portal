@@ -1,6 +1,8 @@
 from app.models.entities import (
+    AdminInvitation,
     AdminRole,
     AdminSession,
+    AdminSiteAccess,
     AdminUser,
     AuditLog,
     AuthAttempt,
@@ -12,14 +14,17 @@ from app.models.entities import (
     PasswordResetToken,
     PortalNotification,
     PortalSetting,
+    PortalSiteSetting,
     SessionStatus,
     SiteProfile,
     Voucher,
 )
 
 __all__ = [
+    "AdminInvitation",
     "AdminRole",
     "AdminSession",
+    "AdminSiteAccess",
     "AdminUser",
     "AuditLog",
     "AuthAttempt",
@@ -31,6 +36,7 @@ __all__ = [
     "PasswordResetToken",
     "PortalNotification",
     "PortalSetting",
+    "PortalSiteSetting",
     "SessionStatus",
     "SiteProfile",
     "Voucher",

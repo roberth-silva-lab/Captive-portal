@@ -65,3 +65,40 @@ def wifi_code_email(code: str, ttl_minutes: int) -> tuple[str, str]:
     </html>
     """
     return text, html_body
+
+def admin_invitation_email(name: str, invite_url: str, expires_hours: int) -> tuple[str, str]:
+    safe_name = html.escape(name)
+    safe_url = html.escape(invite_url)
+    text = (
+        "Portal Wi-Fi - Convite administrativo\n\n"
+        f"Olá, {name}.\n\n"
+        "Você foi convidado para administrar o Portal Wi-Fi.\n"
+        f"Acesse o link abaixo em até {expires_hours} horas para definir sua senha:\n\n"
+        f"{invite_url}\n\n"
+        "Se você não esperava este convite, ignore esta mensagem."
+    )
+    html_body = f"""
+    <!doctype html>
+    <html lang="pt-BR">
+      <body style="margin:0;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#1f2d33;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f6f5;padding:24px 12px;">
+          <tr><td align="center">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #dce7e3;border-radius:8px;overflow:hidden;">
+              <tr><td style="background:#125f78;color:#ffffff;padding:22px 24px;">
+                <div style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.82;">Portal Wi-Fi</div>
+                <div style="font-size:22px;font-weight:700;margin-top:4px;">Convite administrativo</div>
+              </td></tr>
+              <tr><td style="padding:26px 24px;">
+                <h1 style="font-size:20px;margin:0 0 12px;">Olá, {safe_name}</h1>
+                <p style="font-size:15px;line-height:1.55;">Você foi convidado para administrar o Portal Wi-Fi.</p>
+                <p style="font-size:15px;line-height:1.55;">Este convite expira em <strong>{expires_hours} horas</strong>.</p>
+                <p style="margin:24px 0;"><a href="{safe_url}" style="background:#125f78;color:#ffffff;text-decoration:none;padding:13px 18px;border-radius:8px;font-weight:700;display:inline-block;">Definir minha senha</a></p>
+                <p style="font-size:13px;line-height:1.55;color:#5f706a;">Se o botão não funcionar, copie e cole este link no navegador:<br>{safe_url}</p>
+              </td></tr>
+            </table>
+          </td></tr>
+        </table>
+      </body>
+    </html>
+    """
+    return text, html_body

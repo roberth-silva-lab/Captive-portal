@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -17,12 +18,49 @@ class AdminMe(BaseModel):
     email: EmailStr
     name: str
     role: AdminRole
+    siteIds: list[str] = Field(default_factory=list)
+    canSelectAllSites: bool = False
 
 
-class AdminCreate(BaseModel):
+class AdminInviteCreate(BaseModel):
     email: EmailStr
     name: str = Field(min_length=2, max_length=160)
     role: AdminRole = AdminRole.VIEWER
+    siteIds: list[str] = Field(default_factory=list, max_length=20)
+
+
+class AdminInviteResponse(BaseModel):
+    id: str
+    email: EmailStr
+    name: str
+    role: AdminRole
+    expiresAt: datetime
+    acceptedAt: datetime | None = None
+    revokedAt: datetime | None = None
+    deliveryStatus: str
+    inviteUrl: str | None = None
+    siteIds: list[str] = Field(default_factory=list)
+
+
+class AdminInviteAcceptRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+    password: str = Field(min_length=12, max_length=128)
+    confirmPassword: str = Field(min_length=12, max_length=128)
+    acceptedPolicy: bool
+
+    @field_validator("confirmPassword")
+    @classmethod
+    def passwords_match(cls, value: str, info):
+        if "password" in info.data and value != info.data["password"]:
+            raise ValueError("As senhas não conferem.")
+        return value
+
+    @field_validator("acceptedPolicy")
+    @classmethod
+    def policy_required(cls, value: bool) -> bool:
+        if not value:
+            raise ValueError("É necessário aceitar a política administrativa.")
+        return value
 
 
 class DashboardSummary(BaseModel):
@@ -54,18 +92,21 @@ class SiteNode(BaseModel):
     aps: int = 0
     connectedClients: int = 0
     sessions: int = 0
+    allowed: bool = True
 
 
 class VoucherCreateRequest(BaseModel):
-    code: str = Field(min_length=3, max_length=64)
-    durationMinutes: int = Field(gt=0, le=1440)
-    timeLimitMinutes: int | None = Field(default=None, gt=0, le=1440)
+    description: str = Field(default="", max_length=240)
+    quantity: int = Field(default=1, gt=0, le=500)
+    durationMinutes: int = Field(gt=0, le=10080)
+    timeLimitMinutes: int | None = Field(default=None, gt=0, le=10080)
     dataLimitMb: int | None = Field(default=None, gt=0)
     downloadLimit: int | None = Field(default=None, gt=0)
     uploadLimit: int | None = Field(default=None, gt=0)
     deviceLimit: int = Field(default=1, gt=0, le=100)
     maxDevices: int | None = Field(default=None, gt=0, le=100)
     site: str = "Default"
+    siteId: str | None = None
     enabled: bool = True
     expiresAt: datetime | None = None
 
@@ -73,13 +114,15 @@ class VoucherCreateRequest(BaseModel):
     @classmethod
     def valid_site(cls, value: str) -> str:
         if value not in VALID_SITES - {"ALL"}:
-            raise ValueError("Site invalido.")
+            raise ValueError("Site inválido.")
         return value
 
 
 class VoucherResponse(BaseModel):
     id: str
     codeLabel: str
+    description: str = ""
+    status: str
     durationMinutes: int
     timeLimitMinutes: int | None = None
     dataLimitMb: int | None = None
@@ -88,13 +131,28 @@ class VoucherResponse(BaseModel):
     deviceLimit: int
     maxDevices: int
     site: str
+    siteId: str = ""
+    siteName: str = ""
     enabled: bool
     expiresAt: datetime | None = None
     usedCount: int
     isActive: bool
     createdAt: datetime
+    revokedAt: datetime | None = None
 
 
+class CreatedVoucherCode(BaseModel):
+    id: str
+    code: str
+    codeLabel: str
+    site: str
+    durationMinutes: int
+    expiresAt: datetime | None = None
+
+
+class VoucherBatchCreateResponse(BaseModel):
+    created: int
+    vouchers: list[CreatedVoucherCode]
 
 
 class PortalAppearanceRequest(BaseModel):
@@ -103,23 +161,34 @@ class PortalAppearanceRequest(BaseModel):
     logoUrl: str = Field(default="", max_length=2048)
     primaryColor: str = Field(default="#176b87", pattern=r"^#[0-9a-fA-F]{6}$")
     bannerText: str = Field(default="Portal de Acesso Wi-Fi", min_length=1, max_length=160)
-    welcomeText: str = Field(default="Conecte-se de forma segura a rede de visitantes.", min_length=1, max_length=300)
-    successMessage: str = Field(default="Acesso liberado. Voce ja pode navegar na Internet.", min_length=1, max_length=300)
-    expiredMessage: str = Field(default="Sua sessao expirou. Autentique-se novamente para continuar usando o Wi-Fi.", min_length=1, max_length=300)
-    termsText: str = Field(default="Ao continuar, voce aceita os termos de uso da rede.", min_length=1, max_length=8000)
+    welcomeText: str = Field(default="Conecte-se de forma segura à rede de visitantes.", min_length=1, max_length=300)
+    successMessage: str = Field(default="Acesso liberado. Você já pode navegar na Internet.", min_length=1, max_length=300)
+    expiredMessage: str = Field(default="Sua sessão expirou. Autentique-se novamente para continuar usando o Wi-Fi.", min_length=1, max_length=300)
+    termsText: str = Field(default="Ao continuar, você aceita os termos de uso da rede.", min_length=1, max_length=8000)
 
 
 class PortalAppearanceResponse(PortalAppearanceRequest):
     updatedAt: datetime | None = None
+class PortalSiteAppearanceRequest(PortalAppearanceRequest):
+    siteName: str = Field(default="", max_length=160)
+    enabled: bool = True
+
+
+class PortalSiteAppearanceResponse(PortalAppearanceResponse):
+    siteId: str
+    siteName: str
+    enabled: bool = True
+    hasOverride: bool = False
+
 
 class MaintenanceUpdateRequest(BaseModel):
     maintenanceEnabled: bool = False
-    maintenanceTitle: str = Field(default="Portal em manutencao", min_length=1, max_length=160)
+    maintenanceTitle: str = Field(default="Portal em manutenção", min_length=1, max_length=160)
     maintenanceMessage: str = Field(default="Estamos realizando ajustes para melhorar o acesso.", min_length=1, max_length=2000)
     maintenanceStartAt: datetime | None = None
     maintenanceEndAt: datetime | None = None
     maintenanceImageUrl: str = Field(default="", max_length=2048)
-    maintenanceVisualConfig: dict = Field(default_factory=dict)
+    maintenanceVisualConfig: dict[str, Any] = Field(default_factory=dict)
 
 
 class MaintenanceAdminResponse(BaseModel):
@@ -131,7 +200,7 @@ class MaintenanceAdminResponse(BaseModel):
     maintenanceStartAt: datetime | None = None
     maintenanceEndAt: datetime | None = None
     maintenanceImageUrl: str = ""
-    maintenanceVisualConfig: dict = Field(default_factory=dict)
+    maintenanceVisualConfig: dict[str, Any] = Field(default_factory=dict)
     updatedAt: datetime | None = None
 
 
@@ -148,7 +217,7 @@ class NotificationCreateRequest(BaseModel):
     @classmethod
     def valid_site(cls, value: str) -> str:
         if value not in VALID_SITES:
-            raise ValueError("Site invalido.")
+            raise ValueError("Site inválido.")
         return value
 
 
@@ -167,3 +236,11 @@ class NotificationAdminResponse(BaseModel):
     enabled: bool
     createdAt: datetime
     updatedAt: datetime
+class AllowedSiteResponse(BaseModel):
+    siteId: str
+    name: str
+    allowed: bool = True
+
+
+class AdminSiteAccessUpdateRequest(BaseModel):
+    siteIds: list[str] = Field(default_factory=list, max_length=20)

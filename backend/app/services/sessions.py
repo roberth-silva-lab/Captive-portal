@@ -91,16 +91,18 @@ def expire_due_sessions(db: Session) -> int:
     return len(sessions)
 
 
-def dashboard_counts(db: Session) -> dict:
+def dashboard_counts(db: Session, site_ids: list[str] | None = None) -> dict:
     now = utcnow()
 
-    def count_since(days: int) -> int:
-        return db.execute(select(func.count(GuestSession.id)).where(GuestSession.created_at >= now - timedelta(days=days))).scalar_one()
+    site_filter = [GuestSession.site.in_(site_ids)] if site_ids is not None else []
 
-    active = db.execute(select(func.count(GuestSession.id)).where(GuestSession.status == SessionStatus.AUTHORIZED, GuestSession.expires_at > now)).scalar_one()
-    avg_duration = db.execute(select(func.coalesce(func.avg(GuestSession.duration_seconds), 0))).scalar_one()
-    devices = db.execute(select(func.count(func.distinct(GuestSession.client_mac)))).scalar_one()
-    expired = db.execute(select(func.count(GuestSession.id)).where(GuestSession.status == SessionStatus.EXPIRED)).scalar_one()
+    def count_since(days: int) -> int:
+        return db.execute(select(func.count(GuestSession.id)).where(GuestSession.created_at >= now - timedelta(days=days), *site_filter)).scalar_one()
+
+    active = db.execute(select(func.count(GuestSession.id)).where(GuestSession.status == SessionStatus.AUTHORIZED, GuestSession.expires_at > now, *site_filter)).scalar_one()
+    avg_duration = db.execute(select(func.coalesce(func.avg(GuestSession.duration_seconds), 0)).where(*site_filter)).scalar_one()
+    devices = db.execute(select(func.count(func.distinct(GuestSession.client_mac))).where(*site_filter)).scalar_one()
+    expired = db.execute(select(func.count(GuestSession.id)).where(GuestSession.status == SessionStatus.EXPIRED, *site_filter)).scalar_one()
     return {
         "connectedNow": active,
         "activeSessions": active,

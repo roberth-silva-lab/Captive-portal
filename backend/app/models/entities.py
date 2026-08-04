@@ -53,9 +53,23 @@ class AdminUser(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[AdminRole] = mapped_column(Enum(AdminRole), default=AdminRole.VIEWER)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    description: Mapped[str] = mapped_column(String(240), default="")
+    created_by: Mapped[str] = mapped_column(String(64), default="", index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    revoked_by: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
+class AdminSiteAccess(Base):
+    __tablename__ = "admin_site_access"
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("asa"))
+    admin_id: Mapped[str] = mapped_column(ForeignKey("admin_users.id", ondelete="CASCADE"), index=True)
+    site_id: Mapped[str] = mapped_column(String(128), index=True)
+    site_name_snapshot: Mapped[str] = mapped_column(String(128), default="")
+    granted_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (Index("uq_admin_site_access_admin_site", "admin_id", "site_id", unique=True),)
 
 class AdminSession(Base):
     __tablename__ = "admin_sessions"
@@ -81,9 +95,15 @@ class Voucher(Base):
     device_limit: Mapped[int] = mapped_column(Integer, default=1)
     max_devices: Mapped[int] = mapped_column(Integer, default=1)
     site: Mapped[str] = mapped_column(String(128), default="Default", index=True)
+    site_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    site_name_snapshot: Mapped[str] = mapped_column(String(128), default="")
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     used_count: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    description: Mapped[str] = mapped_column(String(240), default="")
+    created_by: Mapped[str] = mapped_column(String(64), default="", index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    revoked_by: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -153,6 +173,22 @@ class EmailLoginCode(Base):
     __table_args__ = (Index("ix_email_login_codes_email_mac", "email_hash", "client_mac"),)
 
 
+
+class AdminInvitation(Base):
+    __tablename__ = "admin_invitations"
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("inv"))
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    role: Mapped[str] = mapped_column(String(32))
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True)
+    invited_by: Mapped[str] = mapped_column(String(64), default="")
+    admin_id: Mapped[str | None] = mapped_column(ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    permitted_site_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+
 class PasswordResetToken(Base):
     __tablename__ = "password_reset_tokens"
     id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("prt"))
@@ -202,6 +238,22 @@ class SiteProfile(Base):
     latitude: Mapped[str] = mapped_column(String(64), default="")
     longitude: Mapped[str] = mapped_column(String(64), default="")
 
+class PortalSiteSetting(Base):
+    __tablename__ = "portal_site_settings"
+    id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: new_id("pss"))
+    site_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    site_name: Mapped[str] = mapped_column(String(128), default="")
+    display_name: Mapped[str] = mapped_column(String(160), default="")
+    logo_url: Mapped[str] = mapped_column(Text, default="")
+    primary_color: Mapped[str] = mapped_column(String(16), default="")
+    public_title: Mapped[str] = mapped_column(String(160), default="")
+    welcome_text: Mapped[str] = mapped_column(Text, default="")
+    success_message: Mapped[str] = mapped_column(Text, default="")
+    reauthentication_message: Mapped[str] = mapped_column(Text, default="")
+    terms_text: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 class PortalSetting(Base):
     __tablename__ = "portal_settings"

@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development", validation_alias="APP_ENV")
     debug: bool = Field(default=False, validation_alias="DEBUG")
     public_base_url: str = Field(default="https://portal.gabineteitinerante.com.br", validation_alias="PUBLIC_BASE_URL")
+    admin_base_url: str = Field(default="https://portal-system.gabineteitinerante.com.br", validation_alias="ADMIN_BASE_URL")
     trusted_proxy_ips: str = Field(default="", validation_alias="TRUSTED_PROXY_IPS")
 
     database_url: str = Field(default="", validation_alias="DATABASE_URL")
@@ -30,6 +31,7 @@ class Settings(BaseSettings):
     unifi_api_prefix: str = Field(default="/proxy/network/integration/v1", validation_alias="UNIFI_API_PREFIX")
     unifi_verify_ssl: bool = Field(default=True, validation_alias="UNIFI_VERIFY_SSL")
     unifi_timeout_seconds: float = Field(default=10.0, validation_alias="UNIFI_TIMEOUT_SECONDS")
+    unifi_cache_ttl_seconds: float = Field(default=5.0, validation_alias="UNIFI_CACHE_TTL_SECONDS")
 
     smtp_host: str = Field(default="", validation_alias="SMTP_HOST")
     smtp_port: int = Field(default=587, validation_alias="SMTP_PORT")

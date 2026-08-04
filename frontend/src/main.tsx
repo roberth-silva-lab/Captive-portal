@@ -1,8 +1,9 @@
-import { StrictMode, type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { StrictMode, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   Activity,
   AlertTriangle,
+  Copy,
   Bell,
   Building2,
   CheckCircle2,
@@ -10,12 +11,8 @@ import {
   FileClock,
   Gauge,
   History,
-  LayoutDashboard,
   LockKeyhole,
-  LogOut,
   Mail,
-  MapPinned,
-  Menu,
   Megaphone,
   MonitorCheck,
   Radio,
@@ -28,111 +25,61 @@ import {
   Wifi,
   X,
 } from 'lucide-react'
+import { api } from './api'
+import { AcceptInvite } from './components/accept-invite'
+import { AdminHeader, AdminSidebar, MaintenanceSummary, PageHeader } from './components/admin-layout'
+import { NoticeAdminPanel } from './components/notices-panel'
+import { PublicPortalPreview } from './components/public-portal-preview'
+import { VoucherPanel } from './components/vouchers-panel'
+import { ConfirmDialog, EmptyState, InfoLine, InfoTile, Panel } from './components/shared'
+import type {
+  AccessPoint,
+  AdminInviteResponse,
+  AdminMe,
+  AllowedSite,
+  AdminNotice,
+  AdminSection,
+  AdminUserRow,
+  AuditEntry,
+  AuthResponse,
+  ClientRow,
+  Dashboard,
+  EmailCodeResponse,
+  GuestSessionRow,
+  MaintenanceAdmin,
+  Method,
+  PortalAppearance,
+  PortalSettings,
+  PortalSiteAppearance,
+  PreviewDevice,
+  PreviewState,
+  SessionFilter,
+  SessionStatus,
+  SiteNode,
+  Stage,
+  Voucher,
+} from './types'
+import {
+  boolValue,
+  cssVars,
+  datetimeLocal,
+  displayVoucher,
+  formatClock,
+  formatCountdown,
+  formatCpf,
+  formatMinutes,
+  formatPhone,
+  fromDatetimeLocal,
+  humanAudit,
+  isCpfComplete,
+  normalizeVoucher,
+  onlyDigits,
+  portalInstitutionName,
+  portalParams,
+  textValue,
+  validEmail,
+} from './utils'
 import './styles.css'
-
-type NoticeType = 'INFO' | 'WARNING' | 'MAINTENANCE' | 'CRITICAL'
-type Notice = { id: string; type: NoticeType; title: string; message: string; startsAt?: string | null; endsAt?: string | null; site: string }
-type Maintenance = { enabled: boolean; active: boolean; scheduled: boolean; title: string; message: string; startsAt?: string | null; endsAt?: string | null; imageUrl: string; visualConfig: Record<string, unknown> }
-type PortalSettings = { logoUrl: string; primaryColor: string; bannerText: string; welcomeText: string; successMessage?: string; expiredMessage?: string; networkName: string; establishmentName: string; termsText: string; maintenanceMode: boolean; maintenance: Maintenance; notifications: Notice[]; expirationWarningMinutes: number[] }
-type AuthResponse = { sessionId: string; authorized: boolean; authorizedAt: string; expiresAt: string; remainingSeconds: number; totalSeconds: number; sessionMinutes: number; nextCheckSeconds: number }
-type EmailCodeResponse = { expiresAt: string }
-type SessionStatus = { status: string; authorized: boolean; authorizedAt?: string | null; expiresAt?: string | null; serverNow: string; remainingSeconds: number; remainingMinutes: number; totalSeconds: number; warningMessage?: string | null; warningMinutes?: number | null; ssid: string; nextCheckSeconds: number }
-type Dashboard = { onlineUsers: number; expiringIn30Minutes: number; expiringIn10Minutes: number; scheduledMaintenances: number; activeNotifications: number; sessionsEndedToday: number; averageSessionSeconds: number; vouchersAvailable: number }
-type PortalAppearance = { networkName: string; establishmentName: string; logoUrl: string; primaryColor: string; bannerText: string; welcomeText: string; successMessage: string; expiredMessage: string; termsText: string; updatedAt?: string | null }
-type MaintenanceAdmin = { maintenanceEnabled: boolean; maintenanceActive: boolean; maintenanceScheduled: boolean; maintenanceTitle: string; maintenanceMessage: string; maintenanceStartAt?: string | null; maintenanceEndAt?: string | null; maintenanceImageUrl: string; maintenanceVisualConfig?: Record<string, unknown>; updatedAt?: string | null }
-type AdminMe = { id: string; email: string; name: string; role: string }
-type SiteNode = { name: string; siteId?: string; status: string; aps: number; connectedClients: number; sessions: number }
-type AdminNotice = Notice & { enabled: boolean; createdAt: string; updatedAt: string }
-type AuditEntry = { id: number; actorId: string; event: string; createdAt: string; targetId: string }
-type Voucher = { id: string; codeLabel: string; durationMinutes: number; site: string; enabled: boolean; usedCount: number; expiresAt?: string | null; maxDevices?: number; dataLimitMb?: number | null; isActive?: boolean }
-type ClientRow = Record<string, unknown>
-type AccessPoint = Record<string, unknown>
-type GuestSessionRow = { id: string; name?: string; clientMac: string; apMac?: string; ssid?: string; site?: string; method: string; status: string; createdAt: string; authorizedAt?: string | null; expiresAt?: string | null; disconnectedAt?: string | null; remainingSeconds: number; durationSeconds: number; canEndAccess: boolean }
-type AdminUserRow = { id: string; name: string; email: string; role: string; status: string; mfa: string; createdAt: string; lastLogin?: string | null }
-
-type Method = 'voucher' | 'cpf' | 'email'
-type Stage = 'idle' | 'validating' | 'authorizing' | 'confirming' | 'checking' | 'released' | 'error'
-type AdminSection = 'dashboard' | 'sessions' | 'visitors' | 'vouchers' | 'notices' | 'maintenance' | 'sites' | 'access-points' | 'admins' | 'audit' | 'settings'
-type SessionFilter = 'all' | 'online' | 'expiring-30' | 'expiring-10' | 'ended-today'
-
-const csrfToken = () => document.cookie.split('; ').find((item) => item.startsWith('portal_csrf='))?.split('=')[1] ?? ''
-
-const api = async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
-  const response = await fetch(path, {
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(csrfToken() ? { 'X-CSRF-Token': csrfToken() } : {}),
-      ...(init.headers ?? {}),
-    },
-    ...init,
-  })
-  const data = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(data.detail ?? data.message ?? 'Falha na requisicao')
-  return data as T
-}
-
-const portalParams = () => {
-  const params = new URLSearchParams(window.location.search)
-  return {
-    clientMac: params.get('id') ?? params.get('mac') ?? params.get('clientMac') ?? '',
-    apMac: params.get('ap') ?? params.get('apMac') ?? '',
-    ssid: params.get('ssid') ?? '',
-    site: params.get('site') ?? '',
-    redirectUrl: params.get('url') ?? params.get('redirectUrl') ?? 'https://www.gstatic.com/generate_204',
-  }
-}
-
-const formatClock = (iso?: string | null) => iso ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(iso)) : 'sem previsao'
-const formatMinutes = (seconds: number) => `${Math.round(seconds / 60)} min`
-const datetimeLocal = (iso?: string | null) => {
-  if (!iso) return ''
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ''
-  const offset = date.getTimezoneOffset() * 60000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
-}
-const fromDatetimeLocal = (value: string) => value ? new Date(value).toISOString() : null
-const cssVars = (settings?: Pick<PortalSettings, 'primaryColor'> | null) => ({ '--portal-primary': settings?.primaryColor || '#176b87' }) as CSSProperties
-const formatCountdown = (seconds: number) => {
-  const safe = Math.max(0, seconds)
-  const hours = Math.floor(safe / 3600)
-  const minutes = Math.floor((safe % 3600) / 60)
-  const rest = safe % 60
-  return hours > 0 ? `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${rest.toString().padStart(2, '0')}` : `${minutes.toString().padStart(2, '0')}:${rest.toString().padStart(2, '0')}`
-}
-
-const onlyDigits = (value: string) => value.replace(/\D/g, '')
-const formatCpf = (value: string) => {
-  const digits = onlyDigits(value).slice(0, 11)
-  return digits
-    .replace(/(\d{3})(\d)/, '$1.$2')
-    .replace(/(\d{3})(\d)/, '$1.$2')
-    .replace(/(\d{3})(\d{1,2})$/, '$1-$2')
-}
-const normalizeVoucher = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 32)
-const displayVoucher = (value: string) => normalizeVoucher(value).replace(/(.{4})/g, '$1-').replace(/-$/, '')
-const validEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
-const formatPhone = (value: string) => {
-  const digits = onlyDigits(value).slice(0, 11)
-  if (digits.length <= 10) return digits.replace(/(\d{2})(\d)/, '($1) $2').replace(/(\d{4})(\d)/, '$1-$2')
-  return digits.replace(/(\d{2})(\d)/, '($1) $2').replace(/(\d{5})(\d)/, '$1-$2')
-}
-const isCpfComplete = (value: string) => onlyDigits(value).length === 11
-const portalInstitutionName = (value?: string) => {
-  const name = value?.trim()
-  if (!name || name.toLowerCase() === 'gabinete itinerante') return 'Receita Federal'
-  return name
-}
-
-const textValue = (row: Record<string, unknown>, keys: string[]) => {
-  for (const key of keys) {
-    const value = row[key]
-    if (value !== undefined && value !== null && value !== '') return String(value)
-  }
-  return ''
-}
-const boolValue = (row: Record<string, unknown>, key: string) => row[key] === true || String(row[key]).toLowerCase() === 'true'
 
 function Portal() {
   const params = useMemo(portalParams, [])
@@ -158,13 +105,16 @@ function Portal() {
   const [session, setSession] = useState<SessionStatus | null>(null)
 
   useEffect(() => {
-    api<PortalSettings>(`/api/settings?site=${encodeURIComponent(params.site)}`)
+    const query = new URLSearchParams({ site: params.site })
+    if (params.clientMac) query.set('clientMac', params.clientMac)
+    if (params.apMac) query.set('apMac', params.apMac)
+    api<PortalSettings>(`/api/settings?${query.toString()}`)
       .then(setSettings)
       .catch((error) => {
         setMessage(error.message)
         setMessageTone('error')
       })
-  }, [params.site])
+  }, [params.apMac, params.clientMac, params.site])
 
   useEffect(() => {
     if (!params.clientMac || stage !== 'released') return
@@ -347,7 +297,7 @@ function Portal() {
 
         <NoticeList notices={settings?.notifications ?? []} />
 
-        <div className="method-tabs" role="tablist" aria-label="Metodo de acesso">
+        <div className="method-tabs" role="tablist" aria-label="Método de acesso">
           <button className={method === 'voucher' ? 'active' : ''} onClick={() => selectMethod('voucher')} type="button"><Ticket /><span>Voucher</span></button>
           <button className={method === 'cpf' ? 'active' : ''} onClick={() => selectMethod('cpf')} type="button"><UserRound /><span>CPF</span></button>
           <button className={method === 'email' ? 'active' : ''} onClick={() => selectMethod('email')} type="button"><Mail /><span>Email</span></button>
@@ -402,12 +352,12 @@ function Portal() {
 
 function MaintenanceScreen({ settings }: { settings: PortalSettings }) {
   const item = settings.maintenance
-  return <main className="portal-shell maintenance" style={cssVars(settings)}><section className="panel maintenance-card">{item.imageUrl ? <img src={item.imageUrl} alt="" /> : <Clock className="hero-icon" />}<span className="portal-eyebrow">{settings.establishmentName}</span><h1>{item.title}</h1><p>{item.message}</p>{item.startsAt ? <p className="meta">Inicio: {formatClock(item.startsAt)}</p> : null}{item.endsAt ? <p className="meta">Previsao de retorno: {formatClock(item.endsAt)}</p> : null}</section></main>
+  return <main className="portal-shell maintenance" style={cssVars(settings)}><section className="panel maintenance-card">{item.imageUrl ? <img src={item.imageUrl} alt="" /> : <Clock className="hero-icon" />}<span className="portal-eyebrow">{settings.establishmentName}</span><h1>{item.title}</h1><p>{item.message}</p>{item.startsAt ? <p className="meta">Início: {formatClock(item.startsAt)}</p> : null}{item.endsAt ? <p className="meta">Previsao de retorno: {formatClock(item.endsAt)}</p> : null}</section></main>
 }
 
 function NoticeList({ notices }: { notices: Notice[] }) {
   if (!notices.length) return null
-  return <div className="notices">{notices.map((notice) => <article key={notice.id} className={`notice ${notice.type.toLowerCase()}`}><Bell /><div><strong>{notice.title}</strong><p>{notice.message}</p>{notice.startsAt ? <small>Inicio: {formatClock(notice.startsAt)}</small> : null}</div></article>)}</div>
+  return <div className="notices">{notices.map((notice) => <article key={notice.id} className={`notice ${notice.type.toLowerCase()}`}><Bell /><div><strong>{notice.title}</strong><p>{notice.message}</p>{notice.startsAt ? <small>Início: {formatClock(notice.startsAt)}</small> : null}</div></article>)}</div>
 }
 
 function TermsModal({ text, onClose, onAccept }: { text?: string; onClose: () => void; onAccept: () => void }) {
@@ -443,7 +393,7 @@ function SessionPanel({ session, method, networkName }: { session: SessionStatus
     const handle = window.setInterval(() => setRemaining((value) => Math.max(0, value - 1)), 1000)
     return () => window.clearInterval(handle)
   }, [session.remainingSeconds])
-  return <div className="session-box success-session-box"><div><span>Rede</span><strong>{session.ssid || networkName}</strong></div><div><span>Metodo usado</span><strong>{method === 'cpf' ? 'CPF' : method === 'email' ? 'Email' : 'Voucher'}</strong></div><div><span>Autorizada em</span><strong>{formatClock(session.authorizedAt)}</strong></div><div><span>Tempo restante</span><strong>{formatCountdown(remaining)}</strong></div>{remaining <= 600 && remaining > 0 ? <p className="warning-line"><AlertTriangle /> Seu acesso termina em {Math.ceil(remaining / 60)} minutos.</p> : null}{session.warningMessage ? <p className="warning-line"><AlertTriangle /> {session.warningMessage}</p> : null}</div>
+  return <div className="session-box success-session-box"><div><span>Rede</span><strong>{session.ssid || networkName}</strong></div><div><span>Método usado</span><strong>{method === 'cpf' ? 'CPF' : method === 'email' ? 'Email' : 'Voucher'}</strong></div><div><span>Autorizada em</span><strong>{formatClock(session.authorizedAt)}</strong></div><div><span>Tempo restante</span><strong>{formatCountdown(remaining)}</strong></div>{remaining <= 600 && remaining > 0 ? <p className="warning-line"><AlertTriangle /> Seu acesso termina em {Math.ceil(remaining / 60)} minutos.</p> : null}{session.warningMessage ? <p className="warning-line"><AlertTriangle /> {session.warningMessage}</p> : null}</div>
 }
 
 function Admin() {
@@ -453,7 +403,10 @@ function Admin() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
   const [maintenance, setMaintenance] = useState<MaintenanceAdmin | null>(null)
   const [appearance, setAppearance] = useState<PortalAppearance | null>(null)
+  const [siteAppearance, setSiteAppearance] = useState<PortalSiteAppearance | null>(null)
   const [sites, setSites] = useState<SiteNode[]>([])
+  const [allowedSites, setAllowedSites] = useState<AllowedSite[]>([])
+  const [selectedSiteId, setSelectedSiteId] = useState(() => window.localStorage.getItem('admin_selected_site_id') || 'ALL')
   const [notices, setNotices] = useState<AdminNotice[]>([])
   const [audit, setAudit] = useState<AuditEntry[]>([])
   const [vouchers, setVouchers] = useState<Voucher[]>([])
@@ -463,7 +416,8 @@ function Admin() {
   const [admins, setAdmins] = useState<AdminUserRow[]>([])
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all')
   const [error, setError] = useState('')
-  const [activeSection, setActiveSection] = useState<AdminSection>('dashboard')
+  const [activeSection, setActiveSection] = useState<AdminSection>(() => window.location.pathname.startsWith('/admin/sites/') ? 'site-detail' : 'dashboard')
+  const [detailSiteId, setDetailSiteId] = useState(() => decodeURIComponent(window.location.pathname.startsWith('/admin/sites/') ? window.location.pathname.split('/').pop() || '' : ''))
   const [menuOpen, setMenuOpen] = useState(false)
   const [savingMaintenance, setSavingMaintenance] = useState(false)
   const [maintenanceMessage, setMaintenanceMessage] = useState('')
@@ -471,26 +425,56 @@ function Admin() {
   const [appearanceMessage, setAppearanceMessage] = useState('')
   const [sessionActionBusy, setSessionActionBusy] = useState(false)
   const [sessionActionMessage, setSessionActionMessage] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
+  const [refreshError, setRefreshError] = useState('')
+  const loadInFlight = useRef(false)
+  const scopedPath = (path: string) => selectedSiteId === 'ALL' ? path : `${path}?siteId=${encodeURIComponent(selectedSiteId)}`
+  const handleSiteChange = (siteId: string) => {
+    window.localStorage.setItem('admin_selected_site_id', siteId)
+    setSelectedSiteId(siteId)
+  }
 
+  const openSiteDetail = (siteId: string) => {
+    setDetailSiteId(siteId)
+    setActiveSection('site-detail')
+    window.history.pushState(null, '', `/admin/sites/${encodeURIComponent(siteId)}`)
+  }
+  const leaveSiteDetail = () => {
+    setDetailSiteId('')
+    setActiveSection('sites')
+    window.history.pushState(null, '', '/admin/sites')
+  }
   const load = async () => {
-    const [me, dash, maint, appearanceRow, siteRows, noticeRows, auditRows, voucherRows, visitorRows, accessPointRows, sessionRows, adminRows] = await Promise.all([
-      api<AdminMe>('/api/admin/me'),
-      api<Dashboard>('/api/admin/dashboard'),
-      api<MaintenanceAdmin>('/api/admin/maintenance'),
-      api<PortalAppearance>('/api/admin/portal-appearance'),
-      api<SiteNode[]>('/api/admin/sites').catch(() => []),
-      api<AdminNotice[]>('/api/admin/notifications').catch(() => []),
-      api<AuditEntry[]>('/api/admin/maintenance/audit').catch(() => []),
-      api<Voucher[]>('/api/admin/vouchers').catch(() => []),
-      api<ClientRow[]>('/api/admin/users').catch(() => []),
-      api<AccessPoint[]>('/api/admin/access-points').catch(() => []),
-      api<GuestSessionRow[]>('/api/admin/sessions').catch(() => []),
-      api<AdminUserRow[]>('/api/admin/admins').catch(() => []),
-    ])
+    if (loadInFlight.current) return
+    loadInFlight.current = true
+    setRefreshing(true)
+    try {
+      const [me, allowedSiteRows, dash, maint, appearanceRow, selectedAppearanceRow, siteRows, noticeRows, auditRows, voucherRows, visitorRows, accessPointRows, sessionRows, adminRows] = await Promise.all([
+        api<AdminMe>('/api/admin/me'),
+        api<AllowedSite[]>('/api/admin/sites/allowed').catch(() => []),
+        api<Dashboard>(scopedPath('/api/admin/dashboard')),
+        api<MaintenanceAdmin>(scopedPath('/api/admin/maintenance')),
+        api<PortalAppearance>('/api/admin/portal-appearance'),
+        selectedSiteId === 'ALL' ? Promise.resolve(null) : api<PortalSiteAppearance>(`/api/admin/portal-appearance/site/${encodeURIComponent(selectedSiteId)}`).catch(() => null),
+        api<SiteNode[]>(scopedPath('/api/admin/sites')).catch(() => []),
+        api<AdminNotice[]>(scopedPath('/api/admin/notifications')).catch(() => []),
+        api<AuditEntry[]>(scopedPath('/api/admin/audit')).catch(() => []),
+        api<Voucher[]>(scopedPath('/api/admin/vouchers')).catch(() => []),
+        api<ClientRow[]>(scopedPath('/api/admin/users')).catch(() => []),
+        api<AccessPoint[]>(scopedPath('/api/admin/access-points')).catch(() => []),
+        api<GuestSessionRow[]>(scopedPath('/api/admin/sessions')).catch(() => []),
+        api<AdminUserRow[]>('/api/admin/admins').catch(() => []),
+      ])
     setAdmin(me)
+    setAllowedSites(allowedSiteRows)
+    const canUseAll = me.canSelectAllSites || me.siteIds.length > 1
+    if (allowedSiteRows.length && selectedSiteId !== 'ALL' && !allowedSiteRows.some((site) => site.siteId === selectedSiteId)) handleSiteChange(canUseAll ? 'ALL' : allowedSiteRows[0].siteId)
+    if (!canUseAll && selectedSiteId === 'ALL' && allowedSiteRows.length === 1) handleSiteChange(allowedSiteRows[0].siteId)
     setDashboard(dash)
     setMaintenance(maint)
     setAppearance(appearanceRow)
+    setSiteAppearance(selectedAppearanceRow)
     setSites(siteRows)
     setNotices(noticeRows)
     setAudit(auditRows)
@@ -498,10 +482,37 @@ function Admin() {
     setVisitors(visitorRows)
     setAccessPoints(accessPointRows)
     setSessions(sessionRows)
-    setAdmins(adminRows)
+      setAdmins(adminRows)
+      setLastUpdatedAt(new Date())
+      setRefreshError('')
+    } catch (err) {
+      setRefreshError(err instanceof Error ? err.message : 'Não foi possível atualizar agora.')
+      throw err
+    } finally {
+      setRefreshing(false)
+      loadInFlight.current = false
+    }
   }
 
   useEffect(() => { void load().catch(() => setDashboard(null)) }, [])
+  useEffect(() => { if (admin) void load().catch(() => undefined) }, [selectedSiteId])
+  useEffect(() => {
+    if (!dashboard) return undefined
+    const intervalMs = activeSection === 'visitors' ? 5000 : 10000
+    const tick = () => {
+      if (document.hidden || loadInFlight.current) return
+      void load().catch(() => undefined)
+    }
+    const handle = window.setInterval(tick, intervalMs)
+    const onVisibility = () => {
+      if (!document.hidden) tick()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.clearInterval(handle)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [activeSection, dashboard])
 
   const login = async () => {
     setError('')
@@ -517,6 +528,8 @@ function Admin() {
     await api('/api/admin/logout', { method: 'POST' }).catch(() => undefined)
     setDashboard(null)
     setAdmin(null)
+    setAllowedSites([])
+    setSiteAppearance(null)
   }
 
   const endAdminSession = async (sessionId: string) => {
@@ -536,14 +549,34 @@ function Admin() {
   }
 
 
+  const resetSiteAppearance = async () => {
+    if (selectedSiteId === 'ALL') return
+    setAppearanceSaving(true)
+    setAppearanceMessage('')
+    try {
+      await api(`/api/admin/portal-appearance/site/${encodeURIComponent(selectedSiteId)}`, { method: 'DELETE' })
+      setAppearanceMessage('Visual da unidade voltou a usar a configuração global.')
+      await load().catch(() => undefined)
+    } catch (err) {
+      setAppearanceMessage(err instanceof Error ? err.message : 'Nao foi possivel remover o visual da unidade.')
+    } finally {
+      setAppearanceSaving(false)
+    }
+  }
   const saveAppearance = async () => {
     if (!appearance) return
     setAppearanceSaving(true)
     setAppearanceMessage('')
     try {
-      const updated = await api<PortalAppearance>('/api/admin/portal-appearance', { method: 'PUT', body: JSON.stringify(appearance) })
-      setAppearance(updated)
-      setAppearanceMessage('Visual e termos salvos com sucesso.')
+      if (selectedSiteId !== 'ALL' && siteAppearance) {
+        const updated = await api<PortalSiteAppearance>(`/api/admin/portal-appearance/site/${encodeURIComponent(selectedSiteId)}`, { method: 'PUT', body: JSON.stringify(siteAppearance) })
+        setSiteAppearance(updated)
+        setAppearanceMessage('Visual e termos da unidade salvos com sucesso.')
+      } else {
+        const updated = await api<PortalAppearance>('/api/admin/portal-appearance', { method: 'PUT', body: JSON.stringify(appearance) })
+        setAppearance(updated)
+        setAppearanceMessage('Visual e termos globais salvos com sucesso.')
+      }
       await load().catch(() => undefined)
     } catch (err) {
       setAppearanceMessage(err instanceof Error ? err.message : 'Nao foi possivel salvar o visual do portal.')
@@ -556,7 +589,7 @@ function Admin() {
     setSavingMaintenance(true)
     setMaintenanceMessage('')
     try {
-      const updated = await api<MaintenanceAdmin>('/api/admin/maintenance', { method: 'PUT', body: JSON.stringify(maintenance) })
+      const updated = await api<MaintenanceAdmin>(scopedPath('/api/admin/maintenance'), { method: 'PUT', body: JSON.stringify(maintenance) })
       setMaintenance(updated)
       setMaintenanceMessage('Alteracoes salvas com sucesso.')
       await load().catch(() => undefined)
@@ -573,20 +606,21 @@ function Admin() {
 
   return (
     <main className="admin-app">
-      <AdminSidebar active={activeSection} open={menuOpen} onClose={() => setMenuOpen(false)} onSelect={(section) => { setActiveSection(section); setMenuOpen(false) }} />
+      <AdminSidebar active={activeSection} open={menuOpen} onClose={() => setMenuOpen(false)} onSelect={(section) => { setActiveSection(section); setMenuOpen(false); if (section !== 'site-detail') window.history.pushState(null, '', section === 'sites' ? '/admin/sites' : '/admin') }} />
       <section className="admin-main" aria-label="Conteudo administrativo">
-        <AdminHeader admin={admin} maintenance={maintenance} onLogout={logout} onMenu={() => setMenuOpen(true)} />
-        {activeSection === 'dashboard' ? <DashboardHome dashboard={dashboard} maintenance={maintenance} sites={sites} notices={notices} audit={audit} onSelect={(section, filter) => { setActiveSection(section); if (filter) setSessionFilter(filter) }} /> : null}
-        {activeSection === 'sessions' ? <SessionsPage sessions={sessions} filter={sessionFilter} busy={sessionActionBusy} feedback={sessionActionMessage} onFilter={setSessionFilter} onEndSession={endAdminSession} /> : null}
+        <AdminHeader admin={admin} maintenance={maintenance} refreshing={refreshing} lastUpdatedAt={lastUpdatedAt} refreshError={refreshError} allowedSites={allowedSites} selectedSiteId={selectedSiteId} onSiteChange={handleSiteChange} onLogout={logout} onMenu={() => setMenuOpen(true)} />
+        {activeSection === 'dashboard' ? <DashboardHome dashboard={dashboard} maintenance={maintenance} sites={sites} notices={notices} vouchers={vouchers} audit={audit} onSelect={(section, filter) => { setActiveSection(section); if (filter) setSessionFilter(filter) }} /> : null}
+        {activeSection === 'sessions' ? <SessionsPage sessions={sessions} sites={sites} filter={sessionFilter} busy={sessionActionBusy} feedback={sessionActionMessage} onFilter={setSessionFilter} onEndSession={endAdminSession} /> : null}
         {activeSection === 'visitors' ? <VisitorsPanel visitors={visitors} busy={sessionActionBusy} onEndSession={endAdminSession} /> : null}
-        {activeSection === 'vouchers' ? <VoucherPanel vouchers={vouchers} /> : null}
-        {activeSection === 'notices' ? <NoticeAdminPanel notices={notices} /> : null}
+        {activeSection === 'vouchers' ? <VoucherPanel vouchers={vouchers} allowedSites={allowedSites} selectedSiteId={selectedSiteId} onChanged={load} /> : null}
+        {activeSection === 'notices' ? <NoticeAdminPanel notices={notices} allowedSites={allowedSites} selectedSiteId={selectedSiteId} canSelectAllSites={Boolean(admin?.canSelectAllSites)} onChanged={load} /> : null}
         {activeSection === 'maintenance' && maintenance ? <MaintenanceAdminPanel maintenance={maintenance} saving={savingMaintenance} feedback={maintenanceMessage} onChange={setMaintenance} onSave={saveMaintenance} /> : null}
-        {activeSection === 'sites' ? <SitesPanel sites={sites} /> : null}
+        {activeSection === 'sites' ? <SitesPanel sites={sites} onOpen={openSiteDetail} /> : null}
+        {activeSection === 'site-detail' ? <SiteDetailPanel siteId={detailSiteId || selectedSiteId} sites={sites} visitors={visitors} sessions={sessions} accessPoints={accessPoints} vouchers={vouchers} notices={notices} maintenance={maintenance} onBack={leaveSiteDetail} onOpenSection={(section) => setActiveSection(section)} /> : null}
         {activeSection === 'access-points' ? <AccessPointsPanel accessPoints={accessPoints} /> : null}
-        {activeSection === 'admins' ? <AdminsPanel admin={admin} admins={admins} /> : null}
+        {activeSection === 'admins' ? <AdminsPanel admin={admin} admins={admins} allowedSites={allowedSites} onChanged={load} /> : null}
         {activeSection === 'audit' ? <AuditPanel audit={audit} /> : null}
-        {activeSection === 'settings' && appearance ? <SettingsPanel admin={admin} maintenance={maintenance} appearance={appearance} saving={appearanceSaving} feedback={appearanceMessage} onChange={setAppearance} onSave={saveAppearance} /> : null}
+        {activeSection === 'settings' && appearance ? <SettingsPanel admin={admin} maintenance={maintenance} appearance={selectedSiteId !== 'ALL' && siteAppearance ? siteAppearance : appearance} allowedSites={allowedSites} selectedSiteId={selectedSiteId} siteAppearance={siteAppearance} notices={notices} saving={appearanceSaving} feedback={appearanceMessage} onChange={(value) => selectedSiteId !== 'ALL' && siteAppearance ? setSiteAppearance({ ...siteAppearance, ...value }) : setAppearance(value)} onSave={saveAppearance} onResetSite={resetSiteAppearance} /> : null}
       </section>
     </main>
   )
@@ -608,60 +642,16 @@ function AdminLogin({ email, password, error, onEmail, onPassword, onLogin }: { 
   )
 }
 
-function AdminSidebar({ active, open, onClose, onSelect }: { active: AdminSection; open: boolean; onClose: () => void; onSelect: (section: AdminSection) => void }) {
-  const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem('admin_sidebar_collapsed') === 'true')
-  const groups: Array<{ label: string; items: Array<{ id: AdminSection; label: string; icon: ReactNode }> }> = [
-    { label: 'Visao geral', items: [{ id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard /> }] },
-    { label: 'Acesso', items: [{ id: 'sessions', label: 'Sessoes', icon: <MonitorCheck /> }, { id: 'visitors', label: 'Usuarios/Visitantes', icon: <UsersRound /> }, { id: 'vouchers', label: 'Vouchers', icon: <Ticket /> }] },
-    { label: 'Infraestrutura', items: [{ id: 'sites', label: 'Sites', icon: <MapPinned /> }, { id: 'access-points', label: 'Access Points', icon: <Radio /> }] },
-    { label: 'Comunicacao', items: [{ id: 'notices', label: 'Avisos', icon: <Megaphone /> }, { id: 'maintenance', label: 'Manutencao', icon: <Clock /> }] },
-    { label: 'Administracao', items: [{ id: 'admins', label: 'Administradores', icon: <UserCog /> }, { id: 'audit', label: 'Auditoria', icon: <History /> }, { id: 'settings', label: 'Configuracoes', icon: <Settings /> }] },
-  ]
-  const toggleCollapsed = () => {
-    const next = !collapsed
-    setCollapsed(next)
-    window.localStorage.setItem('admin_sidebar_collapsed', String(next))
-  }
-  return (
-    <>
-      <aside className={`admin-sidebar ${open ? 'open' : ''} ${collapsed ? 'collapsed' : ''}`} aria-label="Navegacao administrativa">
-        <div className="sidebar-brand"><div className="brand-mark"><Wifi /></div><div><strong>Captive Portal</strong><span>Operacao Wi-Fi</span></div></div>
-        <button className="sidebar-close" type="button" aria-label="Fechar menu" onClick={onClose}><X /></button>
-        <button className="collapse-button" type="button" aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'} onClick={toggleCollapsed}>{collapsed ? '>' : '<'}</button>
-        <nav className="sidebar-nav">
-          {groups.map((group) => <div className="nav-group" key={group.label}><span className="nav-group-label">{group.label}</span>{group.items.map((item) => <button key={item.id} title={collapsed ? item.label : undefined} className={`nav-item ${active === item.id ? 'active' : ''}`} type="button" onClick={() => onSelect(item.id)} aria-current={active === item.id ? 'page' : undefined}>{item.icon}<span>{item.label}</span></button>)}</div>)}
-        </nav>
-      </aside>
-      {open ? <button className="sidebar-backdrop" type="button" aria-label="Fechar menu" onClick={onClose} /> : null}
-    </>
-  )
-}
-
-function AdminHeader({ admin, maintenance, onLogout, onMenu }: { admin: AdminMe | null; maintenance: MaintenanceAdmin | null; onLogout: () => void; onMenu: () => void }) {
-  const isMaintenance = maintenance?.maintenanceActive
-  return (
-    <header className="admin-topbar">
-      <button className="mobile-menu" type="button" onClick={onMenu} aria-label="Abrir menu administrativo"><Menu /></button>
-      <div className="admin-title"><h1>Painel do Portal</h1><p>Visao geral da infraestrutura e dos acessos</p></div>
-      <div className="admin-actions">
-        <span className={`status-pill ${isMaintenance ? 'warning' : 'ok'}`}><span />{isMaintenance ? 'Manutencao' : 'Operacional'}</span>
-        <div className="admin-user" aria-label="Administrador autenticado"><strong>{admin?.name ?? 'Administrador'}</strong><span>{admin?.role ?? 'ADMIN'}</span></div>
-        <button className="logout-button" onClick={onLogout} type="button"><LogOut /> Sair</button>
-      </div>
-    </header>
-  )
-}
 
 
-function PageHeader({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
-  return <header className="page-header"><div><span>Admin</span><h2>{title}</h2><p>{description}</p></div>{action ? <div className="page-actions">{action}</div> : null}</header>
-}
 
-function DashboardHome({ dashboard, maintenance, sites, notices, audit, onSelect }: { dashboard: Dashboard; maintenance: MaintenanceAdmin | null; sites: SiteNode[]; notices: AdminNotice[]; audit: AuditEntry[]; onSelect: (section: AdminSection, filter?: SessionFilter) => void }) {
+
+function DashboardHome({ dashboard, maintenance, sites, notices, vouchers, audit, onSelect }: { dashboard: Dashboard; maintenance: MaintenanceAdmin | null; sites: SiteNode[]; notices: AdminNotice[]; vouchers: Voucher[]; audit: AuditEntry[]; onSelect: (section: AdminSection, filter?: SessionFilter) => void }) {
   const activeNotices = notices.filter((notice) => notice.enabled)
   return (
     <div className="admin-content">
       <MetricGrid dashboard={dashboard} onSelect={onSelect} />
+      <SiteBreakdown sites={sites} notices={notices} vouchers={vouchers} />
       <section className="ops-grid" aria-label="Conteudo operacional">
         <SessionsRecent />
         <SitesPanel sites={sites} compact />
@@ -673,14 +663,23 @@ function DashboardHome({ dashboard, maintenance, sites, notices, audit, onSelect
   )
 }
 
+function SiteBreakdown({ sites, notices, vouchers }: { sites: SiteNode[]; notices: AdminNotice[]; vouchers: Voucher[] }) {
+  if (!sites.length) return null
+  return <section className="site-breakdown-grid" aria-label="Resumo por site">{sites.map((site) => {
+    const siteId = site.siteId || site.name
+    const siteNotices = notices.filter((notice) => notice.enabled && (notice.site === siteId || notice.site === site.name || notice.site === 'ALL')).length
+    const siteVouchers = vouchers.filter((voucher) => voucher.siteId === siteId || voucher.site === siteId || voucher.siteName === site.name || voucher.site === site.name).length
+    return <article className="site-breakdown-card" key={siteId}><div><strong>{site.name}</strong><span>{site.status}</span></div><dl><div><dt>APs</dt><dd>{site.aps}</dd></div><div><dt>Clientes UniFi</dt><dd>{site.connectedClients}</dd></div><div><dt>Sessões</dt><dd>{site.sessions}</dd></div><div><dt>Vouchers</dt><dd>{siteVouchers}</dd></div><div><dt>Avisos</dt><dd>{siteNotices}</dd></div></dl></article>
+  })}</section>
+}
 function MetricGrid({ dashboard, onSelect }: { dashboard: Dashboard; onSelect: (section: AdminSection, filter?: SessionFilter) => void }) {
   const metrics = [
-    { title: 'Usuarios online', value: dashboard.onlineUsers, icon: <Activity />, description: 'Sessoes autorizadas agora.', state: 'normal' as const, section: 'sessions' as const, filter: 'online' as const },
-    { title: 'Expiram em 30 min', value: dashboard.expiringIn30Minutes, icon: <Clock />, description: 'Sessoes proximas do fim.', state: dashboard.expiringIn30Minutes > 0 ? 'warning' as const : 'normal' as const, section: 'sessions' as const, filter: 'expiring-30' as const },
+    { title: 'Usuarios online', value: dashboard.onlineUsers, icon: <Activity />, description: 'Sessões autorizadas agora.', state: 'normal' as const, section: 'sessions' as const, filter: 'online' as const },
+    { title: 'Expiram em 30 min', value: dashboard.expiringIn30Minutes, icon: <Clock />, description: 'Sessões proximas do fim.', state: dashboard.expiringIn30Minutes > 0 ? 'warning' as const : 'normal' as const, section: 'sessions' as const, filter: 'expiring-30' as const },
     { title: 'Expiram em 10 min', value: dashboard.expiringIn10Minutes, icon: <AlertTriangle />, description: 'Exigem maior atencao.', state: dashboard.expiringIn10Minutes > 0 ? 'critical' as const : 'normal' as const, section: 'sessions' as const, filter: 'expiring-10' as const },
     { title: 'Manutencoes agendadas', value: dashboard.scheduledMaintenances, icon: <FileClock />, description: 'Janelas programadas.', state: dashboard.scheduledMaintenances > 0 ? 'warning' as const : 'normal' as const, section: 'maintenance' as const },
     { title: 'Avisos ativos', value: dashboard.activeNotifications, icon: <Megaphone />, description: 'Comunicados visiveis.', state: dashboard.activeNotifications > 0 ? 'warning' as const : 'normal' as const, section: 'notices' as const },
-    { title: 'Encerradas hoje', value: dashboard.sessionsEndedToday, icon: <CheckCircle2 />, description: 'Sessoes finalizadas no dia.', state: 'normal' as const, section: 'sessions' as const, filter: 'ended-today' as const },
+    { title: 'Encerradas hoje', value: dashboard.sessionsEndedToday, icon: <CheckCircle2 />, description: 'Sessões finalizadas no dia.', state: 'normal' as const, section: 'sessions' as const, filter: 'ended-today' as const },
     { title: 'Tempo medio', value: formatMinutes(dashboard.averageSessionSeconds), icon: <Gauge />, description: 'Duracao media registrada.', state: 'normal' as const, section: 'sessions' as const },
     { title: 'Vouchers disponiveis', value: dashboard.vouchersAvailable, icon: <Ticket />, description: 'Vouchers ativos no portal.', state: dashboard.vouchersAvailable === 0 ? 'warning' as const : 'normal' as const, section: 'vouchers' as const },
   ]
@@ -692,29 +691,36 @@ function MetricCard({ title, value, icon, description, state, onOpen }: { title:
 }
 
 function SessionsRecent() {
-  return <Panel title="Sessoes recentes" icon={<MonitorCheck />}><EmptyState message="Nenhuma sessao recente." /></Panel>
+  return <Panel title="Sessões recentes" icon={<MonitorCheck />}><EmptyState message="Nenhuma sessao recente." /></Panel>
 }
 
-function SitesPanel({ sites, compact = false }: { sites: SiteNode[]; compact?: boolean }) {
-  return <Panel title="Status dos sites" icon={<Building2 />} compact={compact}>{sites.length ? <div className="site-list">{sites.map((site) => <article key={site.name} className="site-row"><div><strong>{site.name}</strong><span>{site.status}</span></div><dl><div><dt>APs</dt><dd>{site.aps}</dd></div><div><dt>Clientes</dt><dd>{site.connectedClients}</dd></div><div><dt>Sessoes</dt><dd>{site.sessions}</dd></div></dl></article>)}</div> : <EmptyState message="Nenhum site retornado pela API." />}</Panel>
+function SitesPanel({ sites, compact = false, onOpen }: { sites: SiteNode[]; compact?: boolean; onOpen?: (siteId: string) => void }) {
+  return <Panel title="Status dos sites" icon={<Building2 />} compact={compact}>{sites.length ? <div className="site-list">{sites.map((site) => {
+    const content = <><div><strong>{site.name}</strong><span>{site.status}</span></div><dl><div><dt>APs</dt><dd>{site.aps}</dd></div><div><dt>Clientes</dt><dd>{site.connectedClients}</dd></div><div><dt>Sessões</dt><dd>{site.sessions}</dd></div></dl></>
+    return onOpen && site.siteId ? <button key={site.siteId || site.name} className="site-row clickable" type="button" onClick={() => onOpen(site.siteId || site.name)}>{content}</button> : <article key={site.siteId || site.name} className="site-row">{content}</article>
+  })}</div> : <EmptyState message="Nenhum site retornado pela API." />}</Panel>
 }
 
-function NoticeAdminPanel({ notices, compact = false }: { notices: AdminNotice[]; compact?: boolean }) {
-  return <Panel title="Avisos ativos" icon={<Megaphone />} compact={compact}>{notices.length ? <div className="admin-list">{notices.slice(0, compact ? 4 : 20).map((notice) => <article key={notice.id} className={`admin-list-item ${notice.type.toLowerCase()}`}><div><strong>{notice.title}</strong><span>{notice.site} - {notice.type}</span></div><p>{notice.message}</p></article>)}</div> : <EmptyState message="Nenhum aviso ativo." />}</Panel>
+function SiteDetailPanel({ siteId, sites, visitors, sessions, accessPoints, vouchers, notices, maintenance, onBack, onOpenSection }: { siteId: string; sites: SiteNode[]; visitors: ClientRow[]; sessions: GuestSessionRow[]; accessPoints: AccessPoint[]; vouchers: Voucher[]; notices: AdminNotice[]; maintenance: MaintenanceAdmin | null; onBack: () => void; onOpenSection: (section: AdminSection) => void }) {
+  const site = sites.find((row) => row.siteId === siteId || row.name === siteId)
+  const siteName = site?.name || siteId || 'Site'
+  const siteSessions = sessions.filter((session) => session.site === siteId || session.site === siteName)
+  const siteVisitors = visitors.filter((row) => textValue(row, ['siteId']) === siteId || textValue(row, ['siteName']) === siteName)
+  const siteAps = accessPoints.filter((row) => textValue(row, ['siteId']) === siteId || textValue(row, ['siteName']) === siteName)
+  const siteVouchers = vouchers.filter((voucher) => voucher.siteId === siteId || voucher.site === siteId || voucher.siteName === siteName || voucher.site === siteName)
+  const siteNotices = notices.filter((notice) => notice.site === 'ALL' || notice.site === siteId || notice.site === siteName)
+  const authorized = siteSessions.filter((session) => session.status === 'authorized' && session.remainingSeconds > 0).length
+  const expiring = siteSessions.filter((session) => session.status === 'authorized' && session.remainingSeconds > 0 && session.remainingSeconds <= 1800).length
+  return <div className="admin-content"><PageHeader title={siteName} description="Resumo operacional da unidade selecionada." action={<button className="soft-button" type="button" onClick={onBack}>Voltar para sites</button>} /><section className="site-detail-grid"><InfoTile title="APs" value={site?.aps ?? siteAps.length} detail="Access Points retornados pela UniFi para este site." icon={<Radio />} /><InfoTile title="Clientes UniFi" value={site?.connectedClients ?? siteVisitors.length} detail="Clientes conectados observados no UniFi." icon={<Wifi />} /><InfoTile title="Sessões autorizadas" value={authorized} detail="Sessões ainda válidas no captive portal." icon={<MonitorCheck />} /><InfoTile title="Expiram em 30 min" value={expiring} detail="Acessos próximos do fim." icon={<Clock />} /></section><section className="site-detail-actions"><button className="soft-button" type="button" onClick={() => onOpenSection('visitors')}>Ver clientes</button><button className="soft-button" type="button" onClick={() => onOpenSection('sessions')}>Ver sessões</button><button className="soft-button" type="button" onClick={() => onOpenSection('access-points')}>Ver APs</button><button className="soft-button" type="button" onClick={() => onOpenSection('vouchers')}>Ver vouchers</button><button className="soft-button" type="button" onClick={() => onOpenSection('notices')}>Ver avisos</button><button className="soft-button" type="button" onClick={() => onOpenSection('maintenance')}>Manutenção</button></section><section className="ops-grid"><Panel title="Sessões recentes" icon={<MonitorCheck />} compact>{siteSessions.slice(0, 5).length ? <div className="admin-list">{siteSessions.slice(0, 5).map((session) => <article className="admin-list-item" key={session.id}><div><strong>{session.name || session.clientMac}</strong><span>{session.status} · {formatCountdown(session.remainingSeconds)}</span></div><p>{session.ssid || 'SSID não informado'}</p></article>)}</div> : <EmptyState message="Nenhuma sessão recente neste site." />}</Panel><Panel title="Access Points" icon={<Radio />} compact>{siteAps.slice(0, 5).length ? <div className="admin-list">{siteAps.slice(0, 5).map((ap, index) => <article className="admin-list-item" key={textValue(ap, ['id', 'mac']) || index}><div><strong>{textValue(ap, ['name']) || 'AP sem nome'}</strong><span>{textValue(ap, ['status']) || 'Status indisponível'}</span></div><p>{textValue(ap, ['mac']) || textValue(ap, ['ip']) || 'Identificação indisponível'}</p></article>)}</div> : <EmptyState message="Nenhum AP listado neste site." />}</Panel><Panel title="Vouchers" icon={<Ticket />} compact>{siteVouchers.slice(0, 5).length ? <div className="admin-list">{siteVouchers.slice(0, 5).map((voucher) => <article className="admin-list-item" key={voucher.id}><div><strong>{voucher.codeLabel}</strong><span>{voucher.status}</span></div><p>{voucher.durationMinutes} min · {voucher.usedCount} uso(s)</p></article>)}</div> : <EmptyState message="Nenhum voucher neste site." />}</Panel><Panel title="Avisos e manutenção" icon={<Megaphone />} compact>{siteNotices.slice(0, 4).length ? <div className="admin-list">{siteNotices.slice(0, 4).map((notice) => <article className="admin-list-item" key={notice.id}><div><strong>{notice.title}</strong><span>{notice.site === 'ALL' ? 'Global' : siteName}</span></div><p>{notice.message}</p></article>)}</div> : <EmptyState message={maintenance?.maintenanceEnabled ? 'Sem aviso ativo; manutenção configurada.' : 'Nenhum aviso ativo neste site.'} />}</Panel></section></div>
 }
-
 function AuditPanel({ audit, compact = false }: { audit: AuditEntry[]; compact?: boolean }) {
-  return <Panel title="Ultimas acoes administrativas" icon={<History />} compact={compact}>{audit.length ? <div className="admin-list">{audit.slice(0, compact ? 5 : 30).map((entry) => <article key={entry.id} className="admin-list-item"><div><strong>{entry.event}</strong><span>{formatClock(entry.createdAt)}</span></div><p>Alvo: {entry.targetId || 'global'}</p></article>)}</div> : <EmptyState message="Nenhuma acao administrativa recente." />}</Panel>
+  return <Panel title="Últimas ações administrativas" icon={<History />} compact={compact}>{audit.length ? <div className="admin-list">{audit.slice(0, compact ? 5 : 30).map((entry) => <article key={entry.id} className="admin-list-item"><div><strong>{humanAudit(entry.event)}</strong><span>{formatClock(entry.createdAt)}</span></div><p>{entry.siteLabel && entry.siteLabel !== 'global' ? `Unidade: ${entry.siteLabel}` : 'Escopo: global'} · Referência: {entry.targetId || 'global'}</p></article>)}</div> : <EmptyState message="Nenhuma ação administrativa recente." />}</Panel>
 }
-
-function VoucherPanel({ vouchers }: { vouchers: Voucher[] }) {
-  return <div className="admin-content"><PageHeader title="Vouchers" description="Gerencie vouchers próprios do portal armazenados no Neon." action={<button className="soft-button" type="button" disabled>+ Criar voucher</button>} /><Panel title="Vouchers" icon={<Ticket />}>{vouchers.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Codigo</th><th>Site</th><th>Duracao</th><th>Uso</th><th>Status</th></tr></thead><tbody>{vouchers.map((voucher) => <tr key={voucher.id}><td>{voucher.codeLabel}</td><td>{voucher.site}</td><td>{voucher.durationMinutes} min</td><td>{voucher.usedCount}</td><td>{voucher.enabled ? 'Ativo' : 'Inativo'}</td></tr>)}</tbody></table></div> : <EmptyState message="Nenhum voucher cadastrado." />}</Panel></div>
-}
-
-function SessionsPage({ sessions, filter, busy, feedback, onFilter, onEndSession }: { sessions: GuestSessionRow[]; filter: SessionFilter; busy: boolean; feedback: string; onFilter: (value: SessionFilter) => void; onEndSession: (sessionId: string) => Promise<void> }) {
+function SessionsPage({ sessions, sites, filter, busy, feedback, onFilter, onEndSession }: { sessions: GuestSessionRow[]; sites: SiteNode[]; filter: SessionFilter; busy: boolean; feedback: string; onFilter: (value: SessionFilter) => void; onEndSession: (sessionId: string) => Promise<void> }) {
   const [query, setQuery] = useState('')
   const [confirmEnd, setConfirmEnd] = useState<GuestSessionRow | null>(null)
   const labels: Record<SessionFilter, string> = { all: 'Todas', online: 'Online', 'expiring-30': 'Expiram em 30 min', 'expiring-10': 'Expiram em 10 min', 'ended-today': 'Encerradas hoje' }
+  const siteLabel = (value?: string) => sites.find((site) => site.siteId === value || site.name === value)?.name || value || 'Não disponível'
   const rows = sessions.filter((session) => {
     const blob = `${session.name ?? ''} ${session.clientMac} ${session.ssid ?? ''} ${session.site ?? ''} ${session.apMac ?? ''}`.toLowerCase()
     const matchesQuery = !query || blob.includes(query.toLowerCase())
@@ -735,7 +741,7 @@ function SessionsPage({ sessions, filter, busy, feedback, onFilter, onEndSession
       return
     }
   }
-  return <div className="admin-content"><PageHeader title="Sessoes" description="Acompanhe acessos autorizados, encerrados e expirando pelo banco do portal." /><Panel title="Sessoes do portal" icon={<MonitorCheck />}><div className="table-toolbar"><input aria-label="Buscar sessao" placeholder="Buscar por dispositivo, MAC observado, SSID, site ou AP..." value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="segmented" role="tablist" aria-label="Filtro de sessoes">{Object.entries(labels).map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} type="button" onClick={() => onFilter(key as SessionFilter)}>{label}</button>)}</div>{feedback ? <p className={feedback.includes('sucesso') ? 'success session-action-feedback' : 'error session-action-feedback'} role="status">{feedback}</p> : null}{rows.length ? <div className="admin-table-wrap"><table className="admin-table sessions-table"><thead><tr><th>Dispositivo</th><th>Metodo</th><th>Site</th><th>SSID</th><th>Inicio</th><th>Expira</th><th>Restante</th><th>Status</th><th>Acoes</th></tr></thead><tbody>{rows.map((session) => <tr key={session.id}><td><strong>{session.name || session.clientMac}</strong><small>{session.clientMac}</small></td><td>{session.method}</td><td>{session.site || 'Nao disponivel'}</td><td>{session.ssid || 'Nao disponivel'}</td><td>{formatClock(session.authorizedAt || session.createdAt)}</td><td>{formatClock(session.expiresAt)}</td><td>{formatCountdown(session.remainingSeconds)}</td><td><StatusBadge status={session.status} remainingSeconds={session.remainingSeconds} /></td><td>{session.canEndAccess ? <button className="table-action danger" type="button" disabled={busy} onClick={() => setConfirmEnd(session)}>Encerrar</button> : <span className="muted-cell">Indisponivel</span>}</td></tr>)}</tbody></table></div> : <EmptyState message="Nenhuma sessao encontrada para os filtros atuais." />}</Panel>{confirmEnd ? <ConfirmDialog title="Encerrar acesso" message={`Esta acao encerra o acesso de ${confirmEnd.name || confirmEnd.clientMac} no UniFi. Continuar?`} busy={busy} onCancel={() => setConfirmEnd(null)} onConfirm={() => void requestEnd()} /> : null}</div>
+  return <div className="admin-content"><PageHeader title="Sessões" description="Acompanhe acessos autorizados, encerrados e expirando pelo banco do portal." /><Panel title="Sessões do portal" icon={<MonitorCheck />}><div className="table-toolbar"><input aria-label="Buscar sessao" placeholder="Buscar por dispositivo, MAC observado, SSID, site ou AP..." value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="segmented" role="tablist" aria-label="Filtro de sessoes">{Object.entries(labels).map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} type="button" onClick={() => onFilter(key as SessionFilter)}>{label}</button>)}</div>{feedback ? <p className={feedback.includes('sucesso') ? 'success session-action-feedback' : 'error session-action-feedback'} role="status">{feedback}</p> : null}{rows.length ? <div className="admin-table-wrap"><table className="admin-table sessions-table"><thead><tr><th>Dispositivo</th><th>Método</th><th>Site</th><th>SSID</th><th>Início</th><th>Expira</th><th>Restante</th><th>Status</th><th>Ações</th></tr></thead><tbody>{rows.map((session) => <tr key={session.id}><td><strong>{session.name || session.clientMac}</strong><small>{session.clientMac}</small></td><td>{session.method}</td><td>{siteLabel(session.site)}</td><td>{session.ssid || 'Não disponível'}</td><td>{formatClock(session.authorizedAt || session.createdAt)}</td><td>{formatClock(session.expiresAt)}</td><td>{formatCountdown(session.remainingSeconds)}</td><td><StatusBadge status={session.status} remainingSeconds={session.remainingSeconds} /></td><td>{session.canEndAccess ? <button className="table-action danger" type="button" disabled={busy} onClick={() => setConfirmEnd(session)}>Encerrar</button> : <span className="muted-cell">Indisponível</span>}</td></tr>)}</tbody></table></div> : <EmptyState message="Nenhuma sessao encontrada para os filtros atuais." />}</Panel>{confirmEnd ? <ConfirmDialog title="Encerrar acesso" message={`Esta ação encerra o acesso de ${confirmEnd.name || confirmEnd.clientMac} no UniFi. Continuar?`} busy={busy} onCancel={() => setConfirmEnd(null)} onConfirm={() => void requestEnd()} /> : null}</div>
 }
 
 function StatusBadge({ status, remainingSeconds }: { status: string; remainingSeconds?: number }) {
@@ -770,10 +776,10 @@ function VisitorsPanel({ visitors, busy, onEndSession }: { visitors: ClientRow[]
       setFeedback(err instanceof Error ? err.message : 'Nao foi possivel encerrar o acesso.')
     }
   }
-  return <div className="admin-content"><Panel title="Usuarios e visitantes" icon={<UsersRound />}><div className="table-toolbar"><input aria-label="Buscar visitante" placeholder="Buscar por nome, MAC observado, IP, SSID, AP..." value={query} onChange={(event) => setQuery(event.target.value)} /><select aria-label="Filtrar por site" value={site} onChange={(event) => setSite(event.target.value)}><option value="ALL">Todos os sites</option>{sites.map((item) => <option key={item} value={item}>{item}</option>)}</select><select aria-label="Filtrar por status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="ALL">Todos os status</option><option value="authorized">Autorizado</option><option value="expired">Expirado</option><option value="disconnected">Encerrado</option></select></div>{feedback ? <p className={feedback.includes('sucesso') ? 'success session-action-feedback' : 'error session-action-feedback'} role="status">{feedback}</p> : null}{filtered.length ? <div className="visitor-grid">{filtered.map((row, index) => <button className="visitor-card" key={textValue(row, ['id', 'mac']) || index} type="button" onClick={() => setSelected(row)}><div><strong>{textValue(row, ['name', 'hostname']) || 'Dispositivo sem nome'}</strong><span>{textValue(row, ['siteName']) || 'Site nao informado'} - {textValue(row, ['ssid']) || 'SSID indisponivel'}</span></div><dl><div><dt>MAC observado</dt><dd>{textValue(row, ['mac']) || '-'}</dd></div><div><dt>IP</dt><dd>{textValue(row, ['ip']) || '-'}</dd></div><div><dt>Status</dt><dd>{boolValue(row, 'authorized') ? 'Autorizado' : textValue(row, ['portalStatus', 'status']) || '-'}</dd></div><div><dt>Tempo restante</dt><dd>{row.remainingSeconds ? formatCountdown(Number(row.remainingSeconds)) : '-'}</dd></div></dl></button>)}</div> : <EmptyState message="Nenhum visitante encontrado." />}</Panel>{selected ? <ClientDrawer row={selected} onClose={() => setSelected(null)} onEnd={() => setConfirmEnd(selected)} /> : null}{confirmEnd ? <ConfirmDialog title="Encerrar acesso" message="Esta acao encerra o acesso deste visitante na UniFi. Continuar?" busy={busy} onCancel={() => setConfirmEnd(null)} onConfirm={() => void endAccess(confirmEnd)} /> : null}</div>
+  return <div className="admin-content"><Panel title="Usuarios e visitantes" icon={<UsersRound />}><div className="table-toolbar"><input aria-label="Buscar visitante" placeholder="Buscar por nome, MAC observado, IP, SSID, AP..." value={query} onChange={(event) => setQuery(event.target.value)} /><select aria-label="Filtrar por site" value={site} onChange={(event) => setSite(event.target.value)}><option value="ALL">Todos os sites</option>{sites.map((item) => <option key={item} value={item}>{item}</option>)}</select><select aria-label="Filtrar por status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="ALL">Todos os status</option><option value="authorized">Autorizado</option><option value="expired">Expirado</option><option value="disconnected">Encerrado</option></select></div>{feedback ? <p className={feedback.includes('sucesso') ? 'success session-action-feedback' : 'error session-action-feedback'} role="status">{feedback}</p> : null}{filtered.length ? <div className="visitor-grid">{filtered.map((row, index) => <button className="visitor-card" key={textValue(row, ['id', 'mac']) || index} type="button" onClick={() => setSelected(row)}><div><strong>{textValue(row, ['name', 'hostname']) || 'Dispositivo sem nome'}</strong><span>{textValue(row, ['siteName']) || 'Site nao informado'} - {textValue(row, ['ssid']) || 'SSID indisponivel'}</span></div><dl><div><dt>MAC observado</dt><dd>{textValue(row, ['mac']) || '-'}</dd></div><div><dt>IP</dt><dd>{textValue(row, ['ip']) || '-'}</dd></div><div><dt>Status</dt><dd>{boolValue(row, 'authorized') ? 'Autorizado' : textValue(row, ['portalStatus', 'status']) || '-'}</dd></div><div><dt>Tempo restante</dt><dd>{row.remainingSeconds ? formatCountdown(Number(row.remainingSeconds)) : '-'}</dd></div></dl></button>)}</div> : <EmptyState message="Nenhum visitante encontrado." />}</Panel>{selected ? <ClientDrawer row={selected} onClose={() => setSelected(null)} onEnd={() => setConfirmEnd(selected)} /> : null}{confirmEnd ? <ConfirmDialog title="Encerrar acesso" message="Esta ação encerra o acesso deste visitante na UniFi. Continuar?" busy={busy} onCancel={() => setConfirmEnd(null)} onConfirm={() => void endAccess(confirmEnd)} /> : null}</div>
 }
 function ClientDrawer({ row, onClose, onEnd }: { row: ClientRow; onClose: () => void; onEnd: () => void }) {
-  return <div className="drawer-backdrop" role="presentation" onMouseDown={onClose}><aside className="detail-drawer" role="dialog" aria-modal="true" aria-label="Informacoes do dispositivo" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-head"><div><span>Informacoes do dispositivo</span><h2>{textValue(row, ['name', 'hostname']) || 'Dispositivo sem nome'}</h2></div><button type="button" aria-label="Fechar" onClick={onClose}><X /></button></div><div className="detail-list"><InfoLine label="MAC observado" value={textValue(row, ['mac'])} /><InfoLine label="IP" value={textValue(row, ['ip'])} /><InfoLine label="Site" value={textValue(row, ['siteName', 'siteId'])} /><InfoLine label="AP" value={textValue(row, ['apMac'])} /><InfoLine label="SSID" value={textValue(row, ['ssid'])} /><InfoLine label="Sinal" value={textValue(row, ['signal'])} /><InfoLine label="Metodo de autenticacao" value={textValue(row, ['authorizationMethod'])} /><InfoLine label="Autorizado em" value={formatClock(textValue(row, ['authorizedAt']))} /><InfoLine label="Expira em" value={formatClock(textValue(row, ['expiresAt']))} /><InfoLine label="Tempo restante" value={row.remainingSeconds ? formatCountdown(Number(row.remainingSeconds)) : ''} /></div>{boolValue(row, 'canEndAccess') ? <button className="danger-button" type="button" onClick={onEnd}>Encerrar acesso</button> : <p className="panel-note">Nenhuma acao UniFi disponivel para este registro.</p>}</aside></div>
+  return <div className="drawer-backdrop" role="presentation" onMouseDown={onClose}><aside className="detail-drawer" role="dialog" aria-modal="true" aria-label="Informacoes do dispositivo" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-head"><div><span>Informacoes do dispositivo</span><h2>{textValue(row, ['name', 'hostname']) || 'Dispositivo sem nome'}</h2></div><button type="button" aria-label="Fechar" onClick={onClose}><X /></button></div><div className="detail-list"><InfoLine label="MAC observado" value={textValue(row, ['mac'])} /><InfoLine label="IP" value={textValue(row, ['ip'])} /><InfoLine label="Site" value={textValue(row, ['siteName', 'siteId'])} /><InfoLine label="AP" value={textValue(row, ['apMac'])} /><InfoLine label="SSID" value={textValue(row, ['ssid'])} /><InfoLine label="Sinal" value={textValue(row, ['signal'])} /><InfoLine label="Método de autenticacao" value={textValue(row, ['authorizationMethod'])} /><InfoLine label="Autorizado em" value={formatClock(textValue(row, ['authorizedAt']))} /><InfoLine label="Expira em" value={formatClock(textValue(row, ['expiresAt']))} /><InfoLine label="Tempo restante" value={row.remainingSeconds ? formatCountdown(Number(row.remainingSeconds)) : ''} /></div>{boolValue(row, 'canEndAccess') ? <button className="danger-button" type="button" onClick={onEnd}>Encerrar acesso</button> : <p className="panel-note">Nenhuma acao UniFi disponivel para este registro.</p>}</aside></div>
 }
 
 function AccessPointsPanel({ accessPoints }: { accessPoints: AccessPoint[] }) {
@@ -787,36 +793,95 @@ function ApDrawer({ row, onClose }: { row: AccessPoint; onClose: () => void }) {
   return <div className="drawer-backdrop" role="presentation" onMouseDown={onClose}><aside className="detail-drawer" role="dialog" aria-modal="true" aria-label="Detalhes do access point" onMouseDown={(event) => event.stopPropagation()}><div className="drawer-head"><div><span>Access Point</span><h2>{textValue(row, ['name']) || 'AP sem nome'}</h2></div><button type="button" aria-label="Fechar" onClick={onClose}><X /></button></div><div className="detail-list"><InfoLine label="Modelo" value={textValue(row, ['model'])} /><InfoLine label="MAC" value={textValue(row, ['mac'])} /><InfoLine label="IP" value={textValue(row, ['ip'])} /><InfoLine label="Site" value={textValue(row, ['siteName'])} /><InfoLine label="Status" value={textValue(row, ['status'])} /><InfoLine label="Clientes" value={textValue(row, ['clientes'])} /><InfoLine label="Uptime" value={textValue(row, ['uptime'])} /><InfoLine label="Canal" value={textValue(row, ['canal'])} /><InfoLine label="Banda" value={textValue(row, ['banda'])} /></div><p className="panel-note">Reiniciar AP exige endpoint administrativo especifico e confirmacao sensivel; interface preparada, acao nao conectada nesta rodada.</p></aside></div>
 }
 
-function InfoLine({ label, value }: { label: string; value?: string }) {
-  return <div className="info-line"><span>{label}</span><strong>{value || '-'}</strong></div>
-}
 
-function ConfirmDialog({ title, message, busy, onCancel, onConfirm }: { title: string; message: string; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
-  return <div className="modal-backdrop" role="presentation"><section className="confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title"><h2 id="confirm-title">{title}</h2><p>{message}</p><div className="confirm-actions"><button type="button" onClick={onCancel} disabled={busy}>Cancelar</button><button className="danger-button" type="button" onClick={onConfirm} disabled={busy}>{busy ? 'Encerrando...' : 'Encerrar acesso'}</button></div></section></div>
-}
 
-function AdminsPanel({ admin, admins }: { admin: AdminMe | null; admins: AdminUserRow[] }) {
+function AdminsPanel({ admin, admins, allowedSites, onChanged }: { admin: AdminMe | null; admins: AdminUserRow[]; allowedSites: AllowedSite[]; onChanged: () => Promise<void> }) {
   const canManage = admin?.role === 'SUPERADMIN'
-  return <div className="admin-content"><PageHeader title="Administradores" description="Gerencie acesso administrativo com RBAC. Criacao e MFA exigem fluxo dedicado." action={canManage ? <button className="soft-button" type="button" disabled>+ Novo administrador</button> : null} /><Panel title="Administradores" icon={<UserCog />}>{admins.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Nome</th><th>Email</th><th>Role</th><th>Status</th><th>MFA</th><th>Ultimo login</th><th>Criado em</th></tr></thead><tbody>{admins.map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.email}</td><td>{row.role}</td><td>{row.status}</td><td>{row.mfa === 'not_configured' ? 'Nao configurado' : row.mfa}</td><td>{formatClock(row.lastLogin)}</td><td>{formatClock(row.createdAt)}</td></tr>)}</tbody></table></div> : <EmptyState message={canManage ? 'Nenhum administrador adicional encontrado.' : 'Somente SUPERADMIN pode listar administradores.'} />}</Panel></div>
-}
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [invite, setInvite] = useState<AdminInviteResponse | null>(null)
+  const [form, setForm] = useState({ name: '', email: '', role: 'ADMIN', siteIds: allowedSites.map((site) => site.siteId) })
+  const [editingAccess, setEditingAccess] = useState<AdminUserRow | null>(null)
+  const [accessSiteIds, setAccessSiteIds] = useState<string[]>([])
+  const siteLabel = (siteId: string) => allowedSites.find((site) => site.siteId === siteId)?.name || siteId
+  const adminSiteLabel = (row: AdminUserRow) => row.canSelectAllSites ? 'Todos os sites' : row.siteIds?.length ? row.siteIds.map(siteLabel).join(', ') : 'Sem site atribuído'
 
-function SettingsPanel({ admin, maintenance, appearance, saving, feedback, onChange, onSave }: { admin: AdminMe | null; maintenance: MaintenanceAdmin | null; appearance: PortalAppearance; saving: boolean; feedback: string; onChange: (value: PortalAppearance) => void; onSave: () => void }) {
-  return <div className="admin-content"><PageHeader title="Configuracoes" description="Edite o visual e os textos exibidos para quem acessa o Wi-Fi publico." /><section className="settings-layout"><Panel title="Visual do portal publico" icon={<Settings />}><div className="portal-preview" style={cssVars(appearance)}><div className="portal-brand mini"><div className="portal-brand-mark">{appearance.logoUrl ? <img src={appearance.logoUrl} alt="" /> : <ShieldCheck />}</div><div><span className="portal-eyebrow">{appearance.bannerText}</span><strong>{appearance.establishmentName}</strong><p>{appearance.welcomeText}</p></div></div><div className="preview-card"><strong>{appearance.networkName}</strong><span>{appearance.successMessage}</span></div></div><div className="panel-form settings-form"><label htmlFor="appearance-network">Nome da rede<input id="appearance-network" value={appearance.networkName} onChange={(event) => onChange({ ...appearance, networkName: event.target.value })} /></label><label htmlFor="appearance-establishment">Nome exibido<input id="appearance-establishment" value={appearance.establishmentName} onChange={(event) => onChange({ ...appearance, establishmentName: event.target.value })} /></label><label htmlFor="appearance-logo">URL do logo<input id="appearance-logo" value={appearance.logoUrl} onChange={(event) => onChange({ ...appearance, logoUrl: event.target.value })} placeholder="https://..." /></label><label htmlFor="appearance-color">Cor principal<div className="color-control"><input id="appearance-color" type="color" value={appearance.primaryColor} onChange={(event) => onChange({ ...appearance, primaryColor: event.target.value })} /><input aria-label="Cor principal em hexadecimal" value={appearance.primaryColor} onChange={(event) => onChange({ ...appearance, primaryColor: event.target.value })} /></div></label><label htmlFor="appearance-banner">Titulo da tela publica<input id="appearance-banner" value={appearance.bannerText} onChange={(event) => onChange({ ...appearance, bannerText: event.target.value })} /></label><label htmlFor="appearance-welcome">Texto de boas-vindas<textarea id="appearance-welcome" value={appearance.welcomeText} onChange={(event) => onChange({ ...appearance, welcomeText: event.target.value })} rows={3} /></label><label htmlFor="appearance-success">Mensagem de sucesso<textarea id="appearance-success" value={appearance.successMessage} onChange={(event) => onChange({ ...appearance, successMessage: event.target.value })} rows={3} /></label><label htmlFor="appearance-expired">Mensagem de reautenticacao<textarea id="appearance-expired" value={appearance.expiredMessage} onChange={(event) => onChange({ ...appearance, expiredMessage: event.target.value })} rows={3} /></label><label className="wide" htmlFor="appearance-terms">Termos de uso<textarea id="appearance-terms" value={appearance.termsText} onChange={(event) => onChange({ ...appearance, termsText: event.target.value })} rows={8} /></label><button className="primary admin-save" type="button" onClick={onSave} disabled={saving}>{saving ? 'Salvando...' : 'Salvar visual e termos'}</button>{feedback ? <p className={feedback.includes('sucesso') ? 'success' : 'error'} role="status">{feedback}</p> : null}</div></Panel><Panel title="Resumo seguro" icon={<LockKeyhole />}><div className="prepared-grid single"><InfoTile title="Sessao segura" value="HttpOnly" detail="O painel continua usando cookies e CSRF do backend." icon={<LockKeyhole />} /><InfoTile title="Conta" value={admin?.email ?? 'Autenticada'} detail="Dados carregados de /api/admin/me." icon={<UserRound />} /><InfoTile title="Modo manutencao" value={maintenance?.maintenanceEnabled ? 'Ativo' : 'Inativo'} detail="Configuracao real carregada do backend." icon={<Clock />} /></div></Panel></section></div>
-}
-function InfoTile({ title, value, detail, icon }: { title: string; value: string; detail: string; icon: ReactNode }) {
-  return <article className="info-tile"><div className="metric-icon">{icon}</div><span>{title}</span><strong>{value}</strong><p>{detail}</p></article>
-}
+  const toggleInviteSite = (siteId: string) => {
+    setForm((current) => {
+      const selected = current.siteIds.includes(siteId) ? current.siteIds.filter((item) => item !== siteId) : [...current.siteIds, siteId]
+      return { ...current, siteIds: selected }
+    })
+  }
+  const toggleAccessSite = (siteId: string) => {
+    setAccessSiteIds((current) => current.includes(siteId) ? current.filter((item) => item !== siteId) : [...current, siteId])
+  }
+  const openAccessEditor = (row: AdminUserRow) => {
+    setEditingAccess(row)
+    setAccessSiteIds(row.siteIds ?? [])
+    setMessage('')
+  }
+  const saveAccess = async () => {
+    if (!editingAccess) return
+    setBusy(true)
+    setMessage('')
+    try {
+      await api(`/api/admin/admins/${encodeURIComponent(editingAccess.id)}/site-access`, { method: 'PUT', body: JSON.stringify({ siteIds: accessSiteIds }) })
+      setMessage('Permissões de site atualizadas com sucesso.')
+      setEditingAccess(null)
+      await onChanged()
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Não foi possível atualizar permissões.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const createInvite = async () => {
+    setBusy(true)
+    setMessage('')
+    setInvite(null)
+    try {
+      const siteIds = form.role === 'SUPERADMIN' ? [] : form.siteIds
+      const response = await api<AdminInviteResponse>('/api/admin/admins/invitations', {
+        method: 'POST',
+        body: JSON.stringify({ name: form.name.trim(), email: form.email.trim(), role: form.role, siteIds }),
+      })
+      setInvite(response)
+      setMessage(response.deliveryStatus === 'sent' ? 'Convite enviado com sucesso.' : 'Convite criado. Copie o link para enviar manualmente.')
+      await onChanged()
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Não foi possível criar o convite.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
-function MaintenanceSummary({ maintenance }: { maintenance: MaintenanceAdmin }) {
-  return <section className={`maintenance-summary ${maintenance.maintenanceActive ? 'active' : ''}`}><div><strong>{maintenance.maintenanceActive ? 'Portal em manutencao' : 'Portal funcionando normalmente'}</strong><span>{maintenance.maintenanceScheduled ? `Agendada para ${formatClock(maintenance.maintenanceStartAt)}` : 'Sem janela ativa programada.'}</span></div><Clock /></section>
+  return <div className="admin-content"><PageHeader title="Administradores" description="Convide novos administradores com RBAC e escopo de unidades." action={canManage ? <button className="soft-button" type="button" onClick={() => { setForm({ name: '', email: '', role: 'ADMIN', siteIds: allowedSites.map((site) => site.siteId) }); setOpen(true); setMessage(''); setInvite(null) }}><UserCog /> Novo administrador</button> : null} />{message ? <p className={message.includes('sucesso') || message.includes('criado') ? 'success admin-inline-feedback' : 'error admin-inline-feedback'} role="status">{message}</p> : null}<Panel title="Administradores" icon={<UserCog />}>{admins.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Nome</th><th>Email</th><th>Role</th><th>Sites</th><th>Status</th><th>MFA</th><th>Último login</th><th>Criado em</th><th>Ações</th></tr></thead><tbody>{admins.map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.email}</td><td>{row.role}</td><td>{adminSiteLabel(row)}</td><td>{row.status}</td><td>{row.mfa === 'not_configured' ? 'Não configurado' : row.mfa}</td><td>{formatClock(row.lastLogin)}</td><td>{formatClock(row.createdAt)}</td><td>{canManage && row.role !== 'SUPERADMIN' ? <button className="table-action" type="button" onClick={() => openAccessEditor(row)}>Sites</button> : <span className="muted-cell">Global</span>}</td></tr>)}</tbody></table></div> : <EmptyState message={canManage ? 'Nenhum administrador adicional encontrado.' : 'Somente SUPERADMIN pode listar administradores.'} />}</Panel>{open ? <div className="modal-backdrop centered" role="presentation"><section className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="admin-invite-title"><div className="modal-head"><div><span>RBAC</span><h2 id="admin-invite-title">Convidar administrador</h2></div><button type="button" aria-label="Fechar" onClick={() => setOpen(false)}><X /></button></div><div className="panel-form"><label htmlFor="invite-name">Nome<input id="invite-name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} autoComplete="name" /></label><label htmlFor="invite-email">Email<input id="invite-email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} autoComplete="email" /></label><label htmlFor="invite-role">Perfil<select id="invite-role" value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="ADMIN">ADMIN</option><option value="VIEWER">VIEWER</option><option value="SUPERADMIN">SUPERADMIN</option></select></label>{form.role !== 'SUPERADMIN' ? <fieldset className="site-checks"><legend>Unidades permitidas</legend>{allowedSites.length ? allowedSites.map((site) => <label className="checkline" key={site.siteId}><input type="checkbox" checked={form.siteIds.includes(site.siteId)} onChange={() => toggleInviteSite(site.siteId)} /> {site.name}</label>) : <p className="panel-note">Nenhuma unidade permitida foi retornada pela API.</p>}</fieldset> : <p className="panel-note">SUPERADMIN possui acesso global ao painel.</p>}<button className="primary admin-save" type="button" onClick={() => void createInvite()} disabled={busy || (form.role !== 'SUPERADMIN' && !form.siteIds.length)}>{busy ? 'Enviando...' : 'Enviar convite'}</button>{invite ? <div className="invite-result"><span>{invite.deliveryStatus === 'sent' ? 'Email enviado' : 'Envio de email pendente'}</span><strong>{invite.email}</strong><p>Expira em {formatClock(invite.expiresAt)}</p>{invite.siteIds.length ? <p>Sites: {invite.siteIds.map(siteLabel).join(', ')}</p> : <p>Sites: acesso global</p>}{invite.inviteUrl ? <div className="copy-field"><input aria-label="Link do convite" readOnly value={invite.inviteUrl} /><button className="icon-table-action" type="button" aria-label="Copiar link do convite" onClick={() => void copyToClipboard(invite.inviteUrl || '')}><Copy /></button></div> : null}</div> : null}</div></section></div> : null}{editingAccess ? <div className="modal-backdrop centered" role="presentation"><section className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="site-access-title"><div className="modal-head"><div><span>Permissões</span><h2 id="site-access-title">Sites de {editingAccess.name}</h2></div><button type="button" aria-label="Fechar" onClick={() => setEditingAccess(null)}><X /></button></div><div className="panel-form"><fieldset className="site-checks"><legend>Unidades permitidas</legend>{allowedSites.map((site) => <label className="checkline" key={site.siteId}><input type="checkbox" checked={accessSiteIds.includes(site.siteId)} onChange={() => toggleAccessSite(site.siteId)} /> {site.name}</label>)}</fieldset><button className="primary admin-save" type="button" onClick={() => void saveAccess()} disabled={busy || !accessSiteIds.length}>{busy ? 'Salvando...' : 'Salvar permissões'}</button></div></section></div> : null}</div>
 }
-
+function SettingsPanel({ admin, maintenance, appearance, allowedSites, selectedSiteId, siteAppearance, notices, saving, feedback, onChange, onSave, onResetSite }: { admin: AdminMe | null; maintenance: MaintenanceAdmin | null; appearance: PortalAppearance; allowedSites: AllowedSite[]; selectedSiteId: string; siteAppearance: PortalSiteAppearance | null; notices: AdminNotice[]; saving: boolean; feedback: string; onChange: (value: PortalAppearance) => void; onSave: () => void; onResetSite: () => void }) {
+  const [device, setDevice] = useState<PreviewDevice>('mobile')
+  const [previewState, setPreviewState] = useState<PreviewState>('initial')
+  const selectedSite = allowedSites.find((site) => site.siteId === selectedSiteId)
+  const scopeLabel = selectedSiteId === 'ALL' ? 'Configuração global' : selectedSite?.name || siteAppearance?.siteName || selectedSiteId
+  const activeNotice = notices.find((notice) => notice.enabled && (notice.site === 'ALL' || notice.site === selectedSiteId))
+  const previewStates: Array<{ id: PreviewState; label: string }> = [
+    { id: 'initial', label: 'Inicial' },
+    { id: 'voucher', label: 'Voucher' },
+    { id: 'cpf', label: 'CPF' },
+    { id: 'email', label: 'Email' },
+    { id: 'code-sent', label: 'Código' },
+    { id: 'released', label: 'Liberado' },
+    { id: 'maintenance', label: 'Manutenção' },
+    { id: 'notice', label: 'Aviso' },
+  ]
+  return <div className="admin-content"><PageHeader title="Configurações" description="Edite o visual, mensagens e termos exibidos para quem acessa o Wi-Fi público." /><section className="settings-layout visual-editor-layout"><Panel title={`Editor do portal público · ${scopeLabel}`} icon={<Settings />}><div className="panel-form settings-form">{selectedSiteId !== 'ALL' ? <p className="scope-note wide">Este override vale somente para {scopeLabel}. Campos vazios usam o visual global como fallback no portal público.</p> : <p className="scope-note wide">Você está editando a base institucional usada por todos os sites sem override específico.</p>}<label htmlFor="appearance-network">Nome da rede<input id="appearance-network" value={appearance.networkName} onChange={(event) => onChange({ ...appearance, networkName: event.target.value })} /></label><label htmlFor="appearance-establishment">Nome exibido<input id="appearance-establishment" value={appearance.establishmentName} onChange={(event) => onChange({ ...appearance, establishmentName: event.target.value })} /></label><label htmlFor="appearance-logo">URL do logo<input id="appearance-logo" value={appearance.logoUrl} onChange={(event) => onChange({ ...appearance, logoUrl: event.target.value })} placeholder="https://..." /></label><label htmlFor="appearance-color">Cor principal<div className="color-control"><input id="appearance-color" type="color" value={appearance.primaryColor} onChange={(event) => onChange({ ...appearance, primaryColor: event.target.value })} /><input aria-label="Cor principal em hexadecimal" value={appearance.primaryColor} onChange={(event) => onChange({ ...appearance, primaryColor: event.target.value })} /></div></label><label htmlFor="appearance-banner">Título da tela pública<input id="appearance-banner" value={appearance.bannerText} onChange={(event) => onChange({ ...appearance, bannerText: event.target.value })} /></label><label htmlFor="appearance-welcome">Texto de boas-vindas<textarea id="appearance-welcome" value={appearance.welcomeText} onChange={(event) => onChange({ ...appearance, welcomeText: event.target.value })} rows={3} /></label><label htmlFor="appearance-success">Mensagem de sucesso<textarea id="appearance-success" value={appearance.successMessage} onChange={(event) => onChange({ ...appearance, successMessage: event.target.value })} rows={3} /></label><label htmlFor="appearance-expired">Mensagem de reautenticação<textarea id="appearance-expired" value={appearance.expiredMessage} onChange={(event) => onChange({ ...appearance, expiredMessage: event.target.value })} rows={3} /></label><label className="wide" htmlFor="appearance-terms">Termos de uso<textarea id="appearance-terms" value={appearance.termsText} onChange={(event) => onChange({ ...appearance, termsText: event.target.value })} rows={8} /></label><div className="settings-actions"><button className="primary admin-save" type="button" onClick={onSave} disabled={saving}>{saving ? 'Salvando...' : selectedSiteId === 'ALL' ? 'Salvar visual global' : 'Salvar visual da unidade'}</button>{selectedSiteId !== 'ALL' && siteAppearance?.hasOverride ? <button className="soft-button" type="button" onClick={onResetSite} disabled={saving}>Voltar ao visual global</button> : null}</div>{feedback ? <p className={feedback.includes('sucesso') ? 'success' : 'error'} role="status">{feedback}</p> : null}</div></Panel><Panel title="Preview 1:1" icon={<MonitorCheck />}><div className="preview-toolbar stacked" role="group" aria-label="Escopo do preview"><span>{selectedSiteId === 'ALL' ? 'Visualizando base global' : `Visualizando como ${scopeLabel}`}</span></div><div className="preview-toolbar" role="tablist" aria-label="Tamanho do preview">{(['mobile', 'tablet', 'desktop'] as PreviewDevice[]).map((item) => <button key={item} className={device === item ? 'active' : ''} type="button" onClick={() => setDevice(item)}>{item === 'mobile' ? 'Mobile' : item === 'tablet' ? 'Tablet' : 'Desktop'}</button>)}</div><div className="preview-toolbar wrap" role="tablist" aria-label="Estado do preview">{previewStates.map((item) => <button key={item.id} className={previewState === item.id ? 'active' : ''} type="button" onClick={() => setPreviewState(item.id)}>{item.label}</button>)}</div><PublicPortalPreview appearance={appearance} device={device} state={previewState} noticeTitle={activeNotice?.title} noticeMessage={activeNotice?.message} maintenanceTitle={maintenance?.maintenanceTitle} maintenanceMessage={maintenance?.maintenanceMessage} /><div className="prepared-grid single preview-security"><InfoTile title="Sessão segura" value="HttpOnly" detail="O painel continua usando cookies e CSRF do backend." icon={<LockKeyhole />} /><InfoTile title="Conta" value={admin?.email ?? 'Autenticada'} detail="Dados carregados de /api/admin/me." icon={<UserRound />} /><InfoTile title="Modo manutenção" value={maintenance?.maintenanceEnabled ? 'Ativo' : 'Inativo'} detail="Configuração real carregada do backend." icon={<Clock />} /></div></Panel></section></div>
+}
 function MaintenanceAdminPanel({ maintenance, saving, feedback, onChange, onSave }: { maintenance: MaintenanceAdmin; saving: boolean; feedback: string; onChange: (value: MaintenanceAdmin) => void; onSave: () => void }) {
   return (
     <div className="admin-content">
       <section className="maintenance-editor" aria-labelledby="maintenance-title">
         <div className={`maintenance-status-card ${maintenance.maintenanceEnabled ? 'active' : ''}`}>
-          <div><span>Status do portal</span><strong>{maintenance.maintenanceEnabled ? 'Portal em manutencao' : 'Portal funcionando normalmente'}</strong><p>{maintenance.maintenanceScheduled ? `Inicio programado: ${formatClock(maintenance.maintenanceStartAt)}` : 'A manutencao pode ser imediata ou programada com inicio e termino.'}</p></div>
+          <div><span>Status do portal</span><strong>{maintenance.maintenanceEnabled ? 'Portal em manutencao' : 'Portal funcionando normalmente'}</strong><p>{maintenance.maintenanceScheduled ? `Início programado: ${formatClock(maintenance.maintenanceStartAt)}` : 'A manutencao pode ser imediata ou programada com inicio e termino.'}</p></div>
           <label className="switch" htmlFor="maintenance-enabled"><input id="maintenance-enabled" type="checkbox" checked={maintenance.maintenanceEnabled} onChange={(event) => onChange({ ...maintenance, maintenanceEnabled: event.target.checked })} /><span aria-hidden="true" /></label>
         </div>
         <div className="maintenance-grid">
@@ -824,25 +889,19 @@ function MaintenanceAdminPanel({ maintenance, saving, feedback, onChange, onSave
             <div className="section-heading"><h2 id="maintenance-title">Manutencao</h2><p>Controle a tela que aparece para visitantes durante uma janela de indisponibilidade.</p></div>
             <label htmlFor="maintenance-field-title">Titulo<input id="maintenance-field-title" value={maintenance.maintenanceTitle} onChange={(event) => onChange({ ...maintenance, maintenanceTitle: event.target.value })} /></label>
             <label htmlFor="maintenance-field-message">Mensagem<textarea id="maintenance-field-message" value={maintenance.maintenanceMessage} onChange={(event) => onChange({ ...maintenance, maintenanceMessage: event.target.value })} rows={5} /></label>
-            <div className="date-grid"><label htmlFor="maintenance-start">Inicio<input id="maintenance-start" type="datetime-local" value={datetimeLocal(maintenance.maintenanceStartAt)} onChange={(event) => onChange({ ...maintenance, maintenanceStartAt: fromDatetimeLocal(event.target.value) })} /></label><label htmlFor="maintenance-end">Termino<input id="maintenance-end" type="datetime-local" value={datetimeLocal(maintenance.maintenanceEndAt)} onChange={(event) => onChange({ ...maintenance, maintenanceEndAt: fromDatetimeLocal(event.target.value) })} /></label></div>
+            <div className="date-grid"><label htmlFor="maintenance-start">Início<input id="maintenance-start" type="datetime-local" value={datetimeLocal(maintenance.maintenanceStartAt)} onChange={(event) => onChange({ ...maintenance, maintenanceStartAt: fromDatetimeLocal(event.target.value) })} /></label><label htmlFor="maintenance-end">Termino<input id="maintenance-end" type="datetime-local" value={datetimeLocal(maintenance.maintenanceEndAt)} onChange={(event) => onChange({ ...maintenance, maintenanceEndAt: fromDatetimeLocal(event.target.value) })} /></label></div>
             <label htmlFor="maintenance-image">Imagem da manutencao<input id="maintenance-image" value={maintenance.maintenanceImageUrl} onChange={(event) => onChange({ ...maintenance, maintenanceImageUrl: event.target.value })} placeholder="https://..." /></label>
             <button className="primary admin-save" type="button" onClick={onSave} disabled={saving}>{saving ? 'Salvando...' : 'Salvar alteracoes'}</button>
             {feedback ? <p className={feedback.includes('sucesso') ? 'success' : 'error'} role="status">{feedback}</p> : null}
           </div>
-          <aside className="maintenance-preview"><span>Preview publico</span>{maintenance.maintenanceImageUrl ? <img src={maintenance.maintenanceImageUrl} alt="" /> : <Clock className="hero-icon" />}<strong>{maintenance.maintenanceTitle}</strong><p>{maintenance.maintenanceMessage}</p><small>{maintenance.maintenanceStartAt ? `Inicio: ${formatClock(maintenance.maintenanceStartAt)}` : 'Sem inicio programado.'}</small><small>{maintenance.maintenanceEndAt ? `Termino: ${formatClock(maintenance.maintenanceEndAt)}` : 'Sem termino definido.'}</small></aside>
+          <aside className="maintenance-preview"><span>Preview publico</span>{maintenance.maintenanceImageUrl ? <img src={maintenance.maintenanceImageUrl} alt="" /> : <Clock className="hero-icon" />}<strong>{maintenance.maintenanceTitle}</strong><p>{maintenance.maintenanceMessage}</p><small>{maintenance.maintenanceStartAt ? `Início: ${formatClock(maintenance.maintenanceStartAt)}` : 'Sem inicio programado.'}</small><small>{maintenance.maintenanceEndAt ? `Termino: ${formatClock(maintenance.maintenanceEndAt)}` : 'Sem termino definido.'}</small></aside>
         </div>
       </section>
     </div>
   )
 }
-function Panel({ title, icon, children, compact = false }: { title: string; icon: ReactNode; children: ReactNode; compact?: boolean }) {
-  return <section className={`ops-panel ${compact ? 'compact' : ''}`}><div className="panel-title">{icon}<h2>{title}</h2></div>{children}</section>
-}
 
-function EmptyState({ message }: { message: string }) {
-  return <div className="empty-state"><LockKeyhole /><p>{message}</p></div>
-}
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 
-createRoot(document.getElementById('root')!).render(<StrictMode>{window.location.pathname.startsWith('/admin') ? <Admin /> : <Portal />}</StrictMode>)
+createRoot(document.getElementById('root')!).render(<StrictMode>{window.location.pathname.startsWith('/admin/accept-invite') ? <AcceptInvite /> : window.location.pathname.startsWith('/admin') ? <Admin /> : <Portal />}</StrictMode>)

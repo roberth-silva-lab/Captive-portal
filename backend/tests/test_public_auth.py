@@ -29,7 +29,7 @@ async def test_voucher_authorization_with_mocked_unifi(client, monkeypatch):
     monkeypatch.setattr(public.unifi_client, "authorize_guest", authorize_guest)
 
     db = SessionLocal()
-    db.add(Voucher(code_hash=secret_hash("ABC123"), code_label="ABC***", duration_minutes=30, device_limit=1))
+    db.add(Voucher(code_hash=secret_hash("ABC123"), code_label="ABC***", duration_minutes=30, device_limit=1, site="Esdras", site_id="site-esdras", site_name_snapshot="Esdras"))
     db.commit()
     db.close()
 

@@ -20,6 +20,7 @@ from app.models import (
     NotificationType,
     PortalNotification,
     PortalSetting,
+    PortalSiteSetting,
     SessionStatus,
     Voucher,
 )
@@ -67,8 +68,10 @@ def _same_window(now, starts_at, ends_at) -> tuple[bool, bool]:
     return active, scheduled
 
 
-def get_maintenance(db: Session) -> MaintenanceResponse:
-    row = db.get(MaintenanceConfig, "global")
+def get_maintenance(db: Session, site_id: str | None = None) -> MaintenanceResponse:
+    row = db.get(MaintenanceConfig, site_id) if site_id else None
+    if not row:
+        row = db.get(MaintenanceConfig, "global")
     if not row:
         return MaintenanceResponse()
     active, scheduled = _same_window(utcnow(), row.start_at, row.end_at)
@@ -105,16 +108,28 @@ def active_notifications(db: Session, site: str | None = None) -> list[Notificat
     ]
 
 
-def ensure_not_in_maintenance(db: Session) -> None:
-    maintenance = get_maintenance(db)
+def ensure_not_in_maintenance(db: Session, site_id: str | None = None) -> None:
+    maintenance = get_maintenance(db, site_id)
     if maintenance.active:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, maintenance.message or "Portal temporariamente em manutencao.")
 
 
+
+def _site_setting_value(row: PortalSiteSetting | None, attr: str, fallback: str) -> str:
+    value = getattr(row, attr, "") if row else ""
+    return value or fallback
 @router.get("/settings", response_model=PortalSettingsResponse)
-def settings(site: str | None = None, db: Session = Depends(get_db)):
-    maintenance = get_maintenance(db)
-    notices = active_notifications(db, site)
+async def settings(site: str | None = None, clientMac: str | None = None, apMac: str | None = None, db: Session = Depends(get_db)):
+    site_id = site
+    if clientMac:
+        try:
+            context = await unifi_client.resolve_client_context(client_mac=clientMac, ap_mac=apMac, requested_site=None)
+            site_id = context.site_id
+        except UniFiError:
+            site_id = site
+    site_row = db.scalar(select(PortalSiteSetting).where(PortalSiteSetting.site_id == site_id, PortalSiteSetting.enabled.is_(True))) if site_id else None
+    maintenance = get_maintenance(db, site_id)
+    notices = active_notifications(db, site_id)
     if maintenance.enabled and maintenance.scheduled:
         notices.insert(
             0,
@@ -125,25 +140,28 @@ def settings(site: str | None = None, db: Session = Depends(get_db)):
                 message=maintenance.message or "O portal passara por manutencao programada.",
                 startsAt=maintenance.startsAt,
                 endsAt=maintenance.endsAt,
-                site=site or "ALL",
+                site=site_id or "ALL",
             ),
         )
     return PortalSettingsResponse(
         networkName=portal_setting(db, "network_name", "Wi-Fi Visitante"),
-        establishmentName=portal_setting(db, "establishment_name", "Gabinete Itinerante"),
-        termsText=portal_setting(db, "terms_text", "Ao continuar, voce aceita os termos de uso da rede."),
+        establishmentName=_site_setting_value(site_row, "display_name", portal_setting(db, "establishment_name", "Gabinete Itinerante")),
+        logoUrl=_site_setting_value(site_row, "logo_url", portal_setting(db, "logo_url", "")),
+        primaryColor=_site_setting_value(site_row, "primary_color", portal_setting(db, "primary_color", "#176b87")),
+        bannerText=_site_setting_value(site_row, "public_title", portal_setting(db, "banner_text", "Portal de Acesso Wi-Fi")),
+        welcomeText=_site_setting_value(site_row, "welcome_text", portal_setting(db, "welcome_text", "Conecte-se de forma segura a rede de visitantes.")),
+        termsText=_site_setting_value(site_row, "terms_text", portal_setting(db, "terms_text", "Ao continuar, voce aceita os termos de uso da rede.")),
         maintenanceMode=maintenance.active,
         maintenance=maintenance,
         notifications=notices,
         expirationWarningMinutes=EXPIRATION_WARNINGS,
     )
 
-
 async def _authorize_unifi(payload, minutes: int, data_limit_mb: int | None = None, download_limit: int | None = None, upload_limit: int | None = None, requested_site: str | None = None) -> tuple[str, str]:
     context = await unifi_client.resolve_client_context(
         client_mac=payload.clientMac,
         ap_mac=payload.apMac,
-        requested_site=requested_site if requested_site is not None else payload.site,
+        requested_site=requested_site,
     )
     await unifi_client.authorize_guest(site_id=context.site_id, client_id=context.client_id, minutes=minutes, data_limit_mb=data_limit_mb, rx_kbps=download_limit, tx_kbps=upload_limit)
     confirmed = await unifi_client.get_client_by_mac(context.site_id, payload.clientMac)
@@ -178,9 +196,15 @@ async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Sessio
     if not voucher or (voucher.expires_at and voucher.expires_at <= now):
         record_attempt(db, payload.clientMac, ip, "voucher", False, "invalid_voucher")
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Voucher invalido.")
-    if voucher.site and voucher.site != "Default" and payload.site and payload.site != voucher.site:
+    try:
+        context = await unifi_client.resolve_client_context(client_mac=payload.clientMac, ap_mac=payload.apMac, requested_site=None)
+    except UniFiError as exc:
+        record_attempt(db, payload.clientMac, ip, "voucher", False, "unifi_error")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel identificar o site real no UniFi.") from exc
+    voucher_site = voucher.site_id or voucher.site
+    if voucher_site and voucher_site not in {context.site_id, context.site_name}:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "site_mismatch")
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Voucher nao autorizado para este local.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Este voucher nao e valido para esta unidade.")
     used_devices = db.scalars(select(GuestSession.client_mac).where(GuestSession.voucher_id == voucher.id).distinct()).all()
     max_devices = voucher.max_devices or voucher.device_limit
     if payload.clientMac not in used_devices and len(used_devices) >= max_devices:
@@ -188,12 +212,14 @@ async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Sessio
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Limite de dispositivos do voucher atingido.")
     minutes = voucher.time_limit_minutes or voucher.duration_minutes
     try:
-        voucher_requested_site = voucher.site if voucher.site and voucher.site != "Default" else None
-        site_id, client_id = await _authorize_unifi(payload, minutes, voucher.data_limit_mb, voucher.download_limit, voucher.upload_limit, requested_site=voucher_requested_site)
+        await unifi_client.authorize_guest(site_id=context.site_id, client_id=context.client_id, minutes=minutes, data_limit_mb=voucher.data_limit_mb, rx_kbps=voucher.download_limit, tx_kbps=voucher.upload_limit)
+        confirmed = await unifi_client.get_client_by_mac(context.site_id, payload.clientMac)
+        if not confirmed.authorized:
+            raise UniFiError("UniFi nao confirmou authorized=true para o cliente.")
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "unifi_error")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel confirmar a autorizacao no UniFi.") from exc
-    session = authorize_session(db, client_mac=payload.clientMac, ap_mac=payload.apMac or "", ssid=payload.ssid or "", site=site_id, method=AuthorizationMethod.VOUCHER, minutes=minutes, unifi_client_id=client_id, ip=payload.ip or ip, voucher_id=voucher.id)
+    session = authorize_session(db, client_mac=payload.clientMac, ap_mac=payload.apMac or "", ssid=payload.ssid or "", site=context.site_id, method=AuthorizationMethod.VOUCHER, minutes=minutes, unifi_client_id=confirmed.id, ip=payload.ip or ip, voucher_id=voucher.id)
     voucher.used_count += 1
     db.commit()
     record_attempt(db, payload.clientMac, ip, "voucher", True)

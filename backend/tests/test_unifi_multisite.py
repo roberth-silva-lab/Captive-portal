@@ -139,6 +139,60 @@ async def test_public_authorize_unifi_returns_real_site_uuid(monkeypatch):
 def test_frontend_does_not_default_site_to_default():
     from pathlib import Path
 
-    source = Path("../frontend/src/main.tsx").read_text(encoding="utf-8")
+    source = Path("../frontend/src/utils.ts").read_text(encoding="utf-8")
     assert "site: params.get('site') ?? 'Default'" not in source
     assert "site: params.get('site') ?? ''," in source
+
+@pytest.mark.asyncio
+async def test_unifi_list_clients_uses_short_cache_for_inventory_reads():
+    client = UniFiClient.__new__(UniFiClient)
+    client.cache_ttl_seconds = 30
+    client._cache = {}
+    calls = []
+
+    async def request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return {"data": [{"id": "client-1", "macAddress": "aa:bb:cc:dd:ee:ff"}]}
+
+    client._request = request
+
+    first = await UniFiClient.list_clients(client, "site-esdras")
+    second = await UniFiClient.list_clients(client, "site-esdras")
+
+    assert first == second
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_unifi_filtered_client_lookup_bypasses_inventory_cache():
+    client = UniFiClient.__new__(UniFiClient)
+    client.cache_ttl_seconds = 30
+    client._cache = {}
+    calls = []
+
+    async def request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return {"data": [{"id": "client-1", "macAddress": "aa:bb:cc:dd:ee:ff"}]}
+
+    client._request = request
+
+    await UniFiClient.list_clients(client, "site-esdras", "aa:bb:cc:dd:ee:ff")
+    await UniFiClient.list_clients(client, "site-esdras", "aa:bb:cc:dd:ee:ff")
+
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_unifi_authorize_clears_site_cache():
+    client = UniFiClient.__new__(UniFiClient)
+    client.cache_ttl_seconds = 30
+    client._cache = {("GET", "/sites/site-esdras/clients"): (9999999999.0, [])}
+
+    async def request(method, path, **kwargs):
+        return {"ok": True}
+
+    client._request = request
+
+    await UniFiClient.authorize_guest(client, site_id="site-esdras", client_id="client-1", minutes=60)
+
+    assert ("GET", "/sites/site-esdras/clients") not in client._cache
