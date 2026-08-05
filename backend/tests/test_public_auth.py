@@ -79,3 +79,27 @@ def test_request_email_code_invalidates_previous_codes(client, monkeypatch):
     db.close()
     assert len(rows) == 2
     assert sum(row.consumed_at is None for row in rows) == 1
+
+
+def test_request_email_code_returns_503_when_smtp_fails_without_storing_code(client, monkeypatch):
+    from app.core.database import SessionLocal
+    from app.integrations.email import EmailDeliveryError
+    from app.models import EmailLoginCode
+
+    def fail_send(*args, **kwargs):
+        raise EmailDeliveryError("smtp failed")
+
+    monkeypatch.setattr("app.api.public.send_email", fail_send)
+
+    response = client.post(
+        "/api/auth/email/request-code",
+        json={"clientMac": "AA:BB:CC:DD:EE:FF", "email": "visitante@example.com", "termsAccepted": True},
+    )
+
+    assert response.status_code == 503
+    assert "visitante@example.com" not in response.text
+
+    db = SessionLocal()
+    rows = db.query(EmailLoginCode).all()
+    db.close()
+    assert rows == []

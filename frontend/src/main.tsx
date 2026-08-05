@@ -810,6 +810,14 @@ function SiteDetailPanel({ siteId, sites, visitors, sessions, accessPoints, vouc
 function AuditPanel({ audit, compact = false }: { audit: AuditEntry[]; compact?: boolean }) {
   return <Panel title="Últimas ações administrativas" icon={<History />} compact={compact}>{audit.length ? <div className="admin-list">{audit.slice(0, compact ? 5 : 30).map((entry) => <article key={entry.id} className="admin-list-item"><div><strong>{humanAudit(entry.event)}</strong><span>{formatClock(entry.createdAt)}</span></div><p>{entry.siteLabel && entry.siteLabel !== 'global' ? `Unidade: ${entry.siteLabel}` : 'Escopo: global'} · Referência: {entry.targetId || 'global'}</p></article>)}</div> : <EmptyState message="Nenhuma ação administrativa recente." />}</Panel>
 }
+function StatusBadge({ status, remainingSeconds }: { status?: string; remainingSeconds?: number }) {
+  const normalized = (status || '').toLowerCase()
+  const isCritical = normalized.includes('blocked') || normalized.includes('revoked') || normalized.includes('failed') || normalized.includes('error')
+  const isWarning = normalized.includes('expired') || normalized.includes('ended') || normalized.includes('reauth') || (typeof remainingSeconds === 'number' && remainingSeconds > 0 && remainingSeconds <= 600)
+  const label = normalized.includes('authorized') ? 'Autorizada' : normalized.includes('expired') ? 'Expirada' : normalized.includes('ended') || normalized.includes('disconnected') ? 'Encerrada' : normalized.includes('blocked') ? 'Bloqueada' : status || 'Indefinida'
+  return <span className={`status-badge ${isCritical ? 'critical' : isWarning ? 'warning' : 'ok'}`}>{label}</span>
+}
+
 function SessionsPage({ sessions, sites, filter, busy, feedback, onFilter, onRunOperation }: { sessions: GuestSessionRow[]; sites: SiteNode[]; filter: SessionFilter; busy: boolean; feedback: string; onFilter: (value: SessionFilter) => void; onRunOperation: (sessionId: string, operation: 'end' | 'require-reauthentication' | 'extend' | 'reauthorize' | 'block', body: Record<string, unknown>) => Promise<SessionOperationResponse> }) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<GuestSessionRow | null>(null)
@@ -912,6 +920,14 @@ function AdminsPanel({ admin, admins, invitations, allowedSites, onChanged }: { 
   const [accessSiteIds, setAccessSiteIds] = useState<string[]>([])
   const siteLabel = (siteId: string) => allowedSites.find((site) => site.siteId === siteId)?.name || siteId
   const adminSiteLabel = (row: AdminUserRow) => row.canSelectAllSites ? 'Todos os sites' : row.siteIds?.length ? row.siteIds.map(siteLabel).join(', ') : 'Sem site atribuído'
+  const invitationSummary = invitations.reduce((acc, row) => {
+    const status = row.deliveryStatus.toUpperCase()
+    const expired = row.expiresAt ? new Date(row.expiresAt).getTime() < Date.now() : false
+    if (status === 'REVOKED') acc.revoked += 1
+    else if (expired || status === 'EXPIRED') acc.expired += 1
+    else if (status !== 'ACCEPTED') acc.pending += 1
+    return acc
+  }, { pending: 0, expired: 0, revoked: 0 })
 
   const toggleInviteSite = (siteId: string) => {
     setForm((current) => {

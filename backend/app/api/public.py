@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import timedelta
 from typing import Any
 
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import client_ip
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.integrations.email import send_email
+from app.integrations.email import EmailDeliveryError, send_email
 from app.integrations.email.service import wifi_code_email
 from app.integrations.unifi import UniFiError, unifi_client
 from app.models import (
@@ -46,6 +47,7 @@ from app.services.session_operations import active_block_for_client
 from app.services.sessions import authorize_session, duration_between, seconds_remaining
 
 router = APIRouter(prefix="/api", tags=["public"])
+logger = logging.getLogger(__name__)
 media_router = APIRouter(tags=["media"])
 EXPIRATION_WARNINGS = [30, 10, 5]
 
@@ -284,9 +286,15 @@ def request_email_code(payload: EmailCodeRequest, request: Request, db: Session 
     for previous in previous_codes:
         previous.consumed_at = utcnow()
     db.add(EmailLoginCode(email_hash=email_hash, client_mac=payload.clientMac, code_hash=secret_hash(code), expires_at=expires_at))
-    db.commit()
     text_body, html_body = wifi_code_email(code, ttl_minutes)
-    send_email(payload.email, "Seu codigo de confirmacao", text_body, html_body)
+    try:
+        send_email(payload.email, "Seu código de confirmação", text_body, html_body)
+    except EmailDeliveryError as exc:
+        db.rollback()
+        record_attempt(db, payload.clientMac, ip, "email", False, "smtp_error")
+        logger.warning("Public email code delivery failed", extra={"reason": "smtp_error"})
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Não foi possível enviar o código por e-mail agora. Tente novamente em instantes.") from exc
+    db.commit()
     record_attempt(db, payload.clientMac, ip, "email", True)
     return {"expiresAt": expires_at}
 
