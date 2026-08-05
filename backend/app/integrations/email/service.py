@@ -102,3 +102,74 @@ def admin_invitation_email(name: str, invite_url: str, expires_hours: int) -> tu
     </html>
     """
     return text, html_body
+
+def admin_login_code_email(code: str, ttl_minutes: int) -> tuple[str, str]:
+    grouped_code = f"{code[:3]} {code[3:]}" if len(code) == 6 else code
+    escaped_code = html.escape(grouped_code)
+    text = (
+        "Portal Wi-Fi - Codigo de acesso administrativo\n\n"
+        "Seu codigo de verificacao\n\n"
+        f"{grouped_code}\n\n"
+        f"Este codigo e valido por {ttl_minutes} minutos.\n"
+        "Se voce nao tentou acessar o painel, ignore esta mensagem."
+    )
+    html_body = f"""
+    <!doctype html>
+    <html lang="pt-BR">
+      <body style="margin:0;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#1f2d33;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f6f5;padding:24px 12px;">
+          <tr><td align="center">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #dce7e3;border-radius:8px;overflow:hidden;">
+              <tr><td style="background:#125f78;color:#ffffff;padding:22px 24px;">
+                <div style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.82;">Portal Wi-Fi</div>
+                <div style="font-size:22px;font-weight:700;margin-top:4px;">Verificacao administrativa</div>
+              </td></tr>
+              <tr><td style="padding:26px 24px;">
+                <h1 style="font-size:20px;margin:0 0 12px;">Seu codigo de verificacao</h1>
+                <div style="font-size:38px;letter-spacing:.14em;font-weight:800;color:#123f52;background:#eef6f4;border:1px solid #d8e7e1;border-radius:8px;padding:18px;text-align:center;">{escaped_code}</div>
+                <p style="font-size:15px;line-height:1.55;margin:18px 0 0;">Este codigo e valido por <strong>{ttl_minutes} minutos</strong>.</p>
+                <p style="font-size:14px;line-height:1.55;color:#5f706a;margin:12px 0 0;">Se voce nao tentou acessar o painel, ignore esta mensagem.</p>
+              </td></tr>
+            </table>
+          </td></tr>
+        </table>
+      </body>
+    </html>
+    """
+    return text, html_body
+
+
+def admin_password_reset_code_email(code: str, ttl_minutes: int) -> tuple[str, str]:
+    grouped_code = f"{code[:3]} {code[3:]}" if len(code) == 6 else code
+    escaped_code = html.escape(grouped_code)
+    text = (
+        "Portal Wi-Fi - Recuperacao de senha\n\n"
+        "Use o codigo abaixo para redefinir sua senha administrativa:\n\n"
+        f"{grouped_code}\n\n"
+        f"Este codigo e valido por {ttl_minutes} minutos.\n"
+        "Se voce nao solicitou a recuperacao, ignore esta mensagem."
+    )
+    html_body = f"""
+    <!doctype html>
+    <html lang="pt-BR">
+      <body style="margin:0;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#1f2d33;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f6f5;padding:24px 12px;">
+          <tr><td align="center">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #dce7e3;border-radius:8px;overflow:hidden;">
+              <tr><td style="background:#125f78;color:#ffffff;padding:22px 24px;">
+                <div style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.82;">Portal Wi-Fi</div>
+                <div style="font-size:22px;font-weight:700;margin-top:4px;">Recuperacao de senha</div>
+              </td></tr>
+              <tr><td style="padding:26px 24px;">
+                <h1 style="font-size:20px;margin:0 0 12px;">Codigo para redefinir senha</h1>
+                <div style="font-size:38px;letter-spacing:.14em;font-weight:800;color:#123f52;background:#eef6f4;border:1px solid #d8e7e1;border-radius:8px;padding:18px;text-align:center;">{escaped_code}</div>
+                <p style="font-size:15px;line-height:1.55;margin:18px 0 0;">Este codigo e valido por <strong>{ttl_minutes} minutos</strong>.</p>
+                <p style="font-size:14px;line-height:1.55;color:#5f706a;margin:12px 0 0;">Se voce nao solicitou a recuperacao, ignore esta mensagem.</p>
+              </td></tr>
+            </table>
+          </td></tr>
+        </table>
+      </body>
+    </html>
+    """
+    return text, html_body

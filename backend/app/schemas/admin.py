@@ -13,6 +13,36 @@ class AdminLoginRequest(BaseModel):
     password: str = Field(min_length=8)
 
 
+
+
+class AdminLoginCodeRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8)
+    code: str = Field(min_length=6, max_length=6, pattern="^[0-9]{6}$")
+
+
+class AdminLoginChallengeResponse(BaseModel):
+    mfaRequired: bool = True
+    email: EmailStr
+    expiresAt: datetime
+
+
+class AdminPasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class AdminPasswordResetConfirmRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=6, pattern="^[0-9]{6}$")
+    password: str = Field(min_length=12, max_length=128)
+    confirmPassword: str = Field(validation_alias=AliasChoices("confirmPassword", "confirm_password"), min_length=12, max_length=128)
+
+    @field_validator("confirmPassword")
+    @classmethod
+    def reset_passwords_match(cls, value: str, info):
+        if "password" in info.data and value != info.data["password"]:
+            raise ValueError("As senhas não conferem.")
+        return value
 class AdminMe(BaseModel):
     id: str
     email: EmailStr

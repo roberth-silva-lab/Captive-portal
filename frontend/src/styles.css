@@ -3003,3 +3003,95 @@ input:focus, textarea:focus { outline: 3px solid rgba(23, 107, 135, .18); border
     grid-template-columns: 1fr;
   }
 }
+.admin-auth-success {
+  border: 1px solid #b9dfca;
+  border-radius: 12px;
+  background: #eefaf3;
+  color: #0f6a43;
+  padding: 11px 13px;
+  margin: 14px 0 0;
+}
+
+.admin-auth-links {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.admin-auth-links button {
+  border: 0;
+  background: transparent;
+  color: #087aa2;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 6px 8px;
+}
+
+.admin-code-field {
+  position: relative;
+}
+
+.admin-code-field input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: .01;
+  pointer-events: none;
+}
+
+.admin-otp-slots {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.admin-otp-slots span {
+  min-height: 46px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #cddfdd;
+  border-radius: 999px;
+  background: rgba(255,255,255,.86);
+  color: #13242d;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.admin-otp-slots span.filled {
+  border-color: #177b9a;
+  box-shadow: 0 0 0 3px rgba(23, 123, 154, .12);
+}
+
+.admin-app .soft-button,
+.admin-app .table-action,
+.admin-app .primary.admin-save,
+.admin-modal .primary,
+.maintenance-editor .primary,
+.settings-actions .primary {
+  min-height: 38px;
+  padding: 8px 13px;
+  border-radius: 10px;
+  font-size: .9rem;
+}
+
+.admin-modal .panel-form input,
+.admin-modal .panel-form select,
+.admin-modal .panel-form textarea,
+.maintenance-editor input,
+.maintenance-editor select,
+.maintenance-editor textarea,
+.settings-form input,
+.settings-form select,
+.settings-form textarea {
+  min-height: 42px;
+  border-radius: 10px;
+}
+
+.session-drawer .drawer-actions,
+.table-actions-inline,
+.settings-actions,
+.media-inline-control {
+  gap: 8px;
+}

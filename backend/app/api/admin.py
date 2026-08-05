@@ -10,7 +10,13 @@ from sqlalchemy.orm import Session
 from app.api.deps import client_ip, current_admin, require_csrf, require_role
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.integrations.email.service import EmailDeliveryError, admin_invitation_email, send_email
+from app.integrations.email.service import (
+    EmailDeliveryError,
+    admin_invitation_email,
+    admin_login_code_email,
+    admin_password_reset_code_email,
+    send_email,
+)
 from app.integrations.unifi import UniFiError, unifi_client
 from app.models import (
     AdminInvitation,
@@ -23,6 +29,7 @@ from app.models import (
     GuestSession,
     MaintenanceConfig,
     MediaAsset,
+    PasswordResetToken,
     PortalNotification,
     PortalSetting,
     PortalSiteSetting,
@@ -36,8 +43,12 @@ from app.schemas.admin import (
     AdminInviteCreate,
     AdminInviteResponse,
     AdminInviteValidateResponse,
+    AdminLoginChallengeResponse,
+    AdminLoginCodeRequest,
     AdminLoginRequest,
     AdminMe,
+    AdminPasswordResetConfirmRequest,
+    AdminPasswordResetRequest,
     AdminSiteAccessUpdateRequest,
     AllowedSiteResponse,
     CreatedVoucherCode,
@@ -404,7 +415,25 @@ def _voucher_out(voucher: Voucher) -> VoucherResponse:
     )
 
 
-@router.post("/login", response_model=AdminMe)
+
+def _admin_code_hash(purpose: str, admin_id: str, code: str) -> str:
+    return secret_hash(f"{purpose}:{admin_id}:{code.strip()}")
+
+
+def _six_digit_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def _set_admin_session(admin: AdminUser, response: Response, db: Session) -> None:
+    settings = get_settings()
+    raw_session = random_token_urlsafe()
+    raw_csrf = random_token_urlsafe()
+    db.add(AdminSession(id=secret_hash(raw_session), admin_id=admin.id, csrf_hash=secret_hash(raw_csrf), expires_at=utcnow() + timedelta(minutes=settings.admin_session_minutes)))
+    secure = settings.is_production
+    response.set_cookie(settings.session_cookie_name, raw_session, httponly=True, secure=secure, samesite="lax", max_age=settings.admin_session_minutes * 60)
+    response.set_cookie(settings.csrf_cookie_name, raw_csrf, httponly=False, secure=secure, samesite="lax", max_age=settings.admin_session_minutes * 60)
+
+@router.post("/login", response_model=None)
 def login(payload: AdminLoginRequest, response: Response, request: Request, db: Session = Depends(get_db)):
     ip = client_ip(request)
     enforce_rate_limit(db, payload.email, ip, "admin-login", max_attempts=5)
@@ -413,15 +442,87 @@ def login(payload: AdminLoginRequest, response: Response, request: Request, db: 
         record_attempt(db, payload.email, ip, "admin-login", False, "invalid_credentials")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Credenciais invalidas.")
     settings = get_settings()
-    raw_session = random_token_urlsafe()
-    raw_csrf = random_token_urlsafe()
-    db.add(AdminSession(id=secret_hash(raw_session), admin_id=admin.id, csrf_hash=secret_hash(raw_csrf), expires_at=utcnow() + timedelta(minutes=settings.admin_session_minutes)))
+    if settings.require_admin_email_mfa:
+        code = _six_digit_code()
+        expires_at = utcnow() + timedelta(minutes=settings.admin_mfa_code_ttl_minutes)
+        db.add(PasswordResetToken(admin_id=admin.id, token_hash=_admin_code_hash("admin-login", admin.id, code), expires_at=expires_at))
+        text_body, html_body = admin_login_code_email(code, settings.admin_mfa_code_ttl_minutes)
+        try:
+            send_email(admin.email, "Codigo de acesso ao painel", text_body, html_body)
+        except EmailDeliveryError as exc:
+            db.rollback()
+            record_attempt(db, payload.email, ip, "admin-login", False, "smtp_error")
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Nao foi possivel enviar o codigo de verificacao agora.") from exc
+        db.commit()
+        record_attempt(db, payload.email, ip, "admin-login", True, "mfa_sent")
+        return AdminLoginChallengeResponse(email=admin.email, expiresAt=expires_at)
+    _set_admin_session(admin, response, db)
     db.commit()
-    secure = settings.is_production
-    response.set_cookie(settings.session_cookie_name, raw_session, httponly=True, secure=secure, samesite="lax", max_age=settings.admin_session_minutes * 60)
-    response.set_cookie(settings.csrf_cookie_name, raw_csrf, httponly=False, secure=secure, samesite="lax", max_age=settings.admin_session_minutes * 60)
     record_attempt(db, payload.email, ip, "admin-login", True)
     return admin_out(admin, db)
+
+
+@router.post("/login/verify-code", response_model=AdminMe)
+def verify_admin_login_code(payload: AdminLoginCodeRequest, response: Response, request: Request, db: Session = Depends(get_db)):
+    ip = client_ip(request)
+    enforce_rate_limit(db, payload.email, ip, "admin-login-code", max_attempts=5)
+    admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower(), AdminUser.is_active.is_(True)))
+    if not admin or not verify_password(payload.password, admin.password_hash):
+        record_attempt(db, payload.email, ip, "admin-login-code", False, "invalid_credentials")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Codigo ou credenciais invalidas.")
+    row = db.scalar(select(PasswordResetToken).where(PasswordResetToken.admin_id == admin.id, PasswordResetToken.token_hash == _admin_code_hash("admin-login", admin.id, payload.code), PasswordResetToken.consumed_at.is_(None)).order_by(PasswordResetToken.expires_at.desc()).limit(1))
+    if not row or row.expires_at <= _now_for_expires_at(row.expires_at):
+        record_attempt(db, payload.email, ip, "admin-login-code", False, "invalid_code")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Codigo ou credenciais invalidas.")
+    row.consumed_at = utcnow()
+    _set_admin_session(admin, response, db)
+    db.commit()
+    record_attempt(db, payload.email, ip, "admin-login-code", True)
+    return admin_out(admin, db)
+
+
+@router.post("/password/forgot")
+def forgot_admin_password(payload: AdminPasswordResetRequest, request: Request, db: Session = Depends(get_db)):
+    ip = client_ip(request)
+    enforce_rate_limit(db, payload.email, ip, "admin-password-forgot", max_attempts=5)
+    admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower(), AdminUser.is_active.is_(True)))
+    if not admin:
+        record_attempt(db, payload.email, ip, "admin-password-forgot", True, "unknown_email")
+        return {"ok": True}
+    settings = get_settings()
+    code = _six_digit_code()
+    expires_at = utcnow() + timedelta(minutes=settings.admin_password_reset_ttl_minutes)
+    db.add(PasswordResetToken(admin_id=admin.id, token_hash=_admin_code_hash("admin-reset", admin.id, code), expires_at=expires_at))
+    text_body, html_body = admin_password_reset_code_email(code, settings.admin_password_reset_ttl_minutes)
+    try:
+        send_email(admin.email, "Recuperacao de senha do painel", text_body, html_body)
+    except EmailDeliveryError as exc:
+        db.rollback()
+        record_attempt(db, payload.email, ip, "admin-password-forgot", False, "smtp_error")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Nao foi possivel enviar o codigo de recuperacao agora.") from exc
+    db.commit()
+    record_attempt(db, payload.email, ip, "admin-password-forgot", True)
+    return {"ok": True}
+
+
+@router.post("/password/reset")
+def reset_admin_password(payload: AdminPasswordResetConfirmRequest, request: Request, db: Session = Depends(get_db)):
+    ip = client_ip(request)
+    enforce_rate_limit(db, payload.email, ip, "admin-password-reset", max_attempts=5)
+    admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower(), AdminUser.is_active.is_(True)))
+    if not admin:
+        record_attempt(db, payload.email, ip, "admin-password-reset", False, "invalid_code")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Codigo invalido ou expirado.")
+    row = db.scalar(select(PasswordResetToken).where(PasswordResetToken.admin_id == admin.id, PasswordResetToken.token_hash == _admin_code_hash("admin-reset", admin.id, payload.code), PasswordResetToken.consumed_at.is_(None)).order_by(PasswordResetToken.expires_at.desc()).limit(1))
+    if not row or row.expires_at <= _now_for_expires_at(row.expires_at):
+        record_attempt(db, payload.email, ip, "admin-password-reset", False, "invalid_code")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Codigo invalido ou expirado.")
+    row.consumed_at = utcnow()
+    admin.password_hash = hash_password(payload.password)
+    admin.updated_at = utcnow()
+    db.commit()
+    record_attempt(db, payload.email, ip, "admin-password-reset", True)
+    return {"ok": True}
 
 
 @router.post("/logout", dependencies=[Depends(require_csrf)])

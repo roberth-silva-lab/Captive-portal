@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     session_cookie_name: str = Field(default="portal_admin_session", validation_alias="SESSION_COOKIE_NAME")
     csrf_cookie_name: str = Field(default="portal_csrf", validation_alias="CSRF_COOKIE_NAME")
     admin_session_minutes: int = Field(default=480, validation_alias="ADMIN_SESSION_MINUTES")
+    admin_email_mfa_required: bool = Field(default=False, validation_alias="ADMIN_EMAIL_MFA_REQUIRED")
+    admin_mfa_code_ttl_minutes: int = Field(default=10, validation_alias="ADMIN_MFA_CODE_TTL_MINUTES")
+    admin_password_reset_ttl_minutes: int = Field(default=15, validation_alias="ADMIN_PASSWORD_RESET_TTL_MINUTES")
 
     unifi_base_url: str = Field(default="https://unifi.gabineteitinerante.com.br:11443", validation_alias="UNIFI_BASE_URL")
     unifi_api_key: str = Field(default="", validation_alias="UNIFI_API_KEY")
@@ -61,6 +64,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+
+    @property
+    def require_admin_email_mfa(self) -> bool:
+        return self.is_production or self.admin_email_mfa_required
 
     def validate_runtime(self) -> None:
         if not self.is_production:

@@ -34,6 +34,7 @@ import { ConfirmDialog, EmptyState, InfoLine, InfoTile, Panel } from './componen
 import type {
   AccessPoint,
   AdminInviteResponse,
+  AdminLoginChallenge,
   AdminMe,
   AllowedSite,
   AdminNotice,
@@ -300,12 +301,15 @@ function Portal() {
       return
     }
     setEmailSending(true)
+    setMessage('Liberando acesso temporário para você receber o código...')
+    setMessageTone('info')
     try {
+      await api<{ ok: boolean }>('/api/portal/extend-provisional', { method: 'POST', body: JSON.stringify(basePayload) })
       const response = await api<EmailCodeResponse>('/api/auth/email/request-code', { method: 'POST', body: JSON.stringify({ ...basePayload, email: identifier.trim() }) })
       setCodeRequested(true)
       setEmailExpiresAt(response.expiresAt)
       setEmailCooldown(30)
-      setMessage('Se o endereço puder receber mensagens, enviaremos um código. Verifique sua caixa de entrada e spam.')
+      setMessage('Acesso temporário liberado por alguns minutos. Enviamos um código para o e-mail informado.')
       setMessageTone('success')
       window.setTimeout(() => codeInputRef.current?.focus(), 80)
     } catch (error) {
@@ -543,14 +547,22 @@ function Admin() {
     }
   }, [activeSection, dashboard])
 
-  const login = async () => {
+  const login = async (code?: string) => {
     setError('')
-    try {
-      await api('/api/admin/login', { method: 'POST', body: JSON.stringify({ email, password }) })
-      await load()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha no login')
-    }
+    const path = code ? '/api/admin/login/verify-code' : '/api/admin/login'
+    const body = code ? { email, password, code } : { email, password }
+    const result = await api<AdminMe | AdminLoginChallenge>(path, { method: 'POST', body: JSON.stringify(body) })
+    if ('mfaRequired' in result) return result
+    await load()
+    return result
+  }
+
+  const requestPasswordReset = async (targetEmail: string) => {
+    await api<{ ok: boolean }>('/api/admin/password/forgot', { method: 'POST', body: JSON.stringify({ email: targetEmail }) })
+  }
+
+  const resetPassword = async (targetEmail: string, code: string, newPassword: string, confirmPassword: string) => {
+    await api<{ ok: boolean }>('/api/admin/password/reset', { method: 'POST', body: JSON.stringify({ email: targetEmail, code, password: newPassword, confirmPassword }) })
   }
 
   const logout = async () => {
@@ -648,7 +660,7 @@ function Admin() {
   }
 
   if (!dashboard || loadStatus === 'unauthenticated') {
-    return <AdminLogin email={email} password={password} error={error} onEmail={setEmail} onPassword={setPassword} onLogin={login} />
+    return <AdminLogin email={email} password={password} error={error} onEmail={setEmail} onPassword={setPassword} onLogin={login} onRequestPasswordReset={requestPasswordReset} onResetPassword={resetPassword} />
   }
 
   return (
@@ -715,27 +727,119 @@ class AdminSectionErrorBoundary extends Component<AdminSectionErrorBoundaryProps
   }
 }
 
-function AdminLogin({ email, password, error, onEmail, onPassword, onLogin }: { email: string; password: string; error: string; onEmail: (value: string) => void; onPassword: (value: string) => void; onLogin: () => void }) {
+function AdminLogin({ email, password, error, onEmail, onPassword, onLogin, onRequestPasswordReset, onResetPassword }: { email: string; password: string; error: string; onEmail: (value: string) => void; onPassword: (value: string) => void; onLogin: (code?: string) => Promise<AdminMe | AdminLoginChallenge>; onRequestPasswordReset: (email: string) => Promise<void>; onResetPassword: (email: string, code: string, password: string, confirmPassword: string) => Promise<void> }) {
+  const [mode, setMode] = useState<'login' | 'code' | 'forgot' | 'reset'>('login')
+  const [code, setCode] = useState('')
+  const [resetCode, setResetCode] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [localError, setLocalError] = useState('')
+  const [info, setInfo] = useState('')
+  const shownError = localError || error
+
+  const submitLogin = async () => {
+    setBusy(true)
+    setLocalError('')
+    setInfo('')
+    try {
+      const result = await onLogin()
+      if ('mfaRequired' in result) {
+        setMode('code')
+        setCode('')
+        setInfo('Enviamos um código de 6 dígitos para o e-mail do administrador.')
+      }
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Falha no login')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const verifyCode = async (value = code) => {
+    if (value.length !== 6) return
+    setBusy(true)
+    setLocalError('')
+    try {
+      await onLogin(value)
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Código inválido ou expirado.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submitForgot = async () => {
+    setBusy(true)
+    setLocalError('')
+    setInfo('')
+    try {
+      await onRequestPasswordReset(email)
+      setMode('reset')
+      setInfo('Se o e-mail estiver cadastrado, enviaremos um código de recuperação.')
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Não foi possível enviar o código agora.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submitReset = async () => {
+    setBusy(true)
+    setLocalError('')
+    setInfo('')
+    try {
+      await onResetPassword(email, resetCode, newPassword, confirmPassword)
+      setMode('login')
+      setCode('')
+      setResetCode('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setInfo('Senha alterada com sucesso. Entre usando a nova senha.')
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Não foi possível alterar a senha.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const updateCode = (value: string) => {
+    const cleaned = onlyDigits(value).slice(0, 6)
+    setCode(cleaned)
+    if (cleaned.length === 6) void verifyCode(cleaned)
+  }
+
+  const codeSlots = (value: string) => <div className="admin-otp-slots" aria-hidden="true">{Array.from({ length: 6 }).map((_, index) => <span key={index} className={value[index] ? 'filled' : ''}>{value[index] ?? ''}</span>)}</div>
+
   return (
     <main className="portal-shell admin-login-shell admin-auth-shell">
       <section className="panel admin-card admin-auth-card" aria-labelledby="admin-login-title">
         <div className="admin-auth-icon"><ShieldCheck aria-hidden="true" /></div>
         <div className="admin-auth-heading">
-          <h1 id="admin-login-title">Painel administrativo</h1>
-          <p>Entre para acompanhar acessos, avisos, vouchers e manutenção do portal.</p>
+          <h1 id="admin-login-title">{mode === 'forgot' ? 'Recuperar acesso' : mode === 'reset' ? 'Redefinir senha' : mode === 'code' ? 'Verificação por e-mail' : 'Painel administrativo'}</h1>
+          <p>{mode === 'code' ? 'Digite o código enviado para concluir o login seguro.' : mode === 'forgot' ? 'Informe o e-mail administrativo para receber um código.' : mode === 'reset' ? 'Use o código recebido e defina uma nova senha forte.' : 'Entre para acompanhar acessos, avisos, vouchers e manutenção do portal.'}</p>
         </div>
         <div className="admin-auth-form">
-          <label htmlFor="admin-email">E-mail<input id="admin-email" value={email} onChange={(event) => onEmail(event.target.value)} autoComplete="email" placeholder="admin@exemplo.com" /></label>
-          <label htmlFor="admin-password">Senha<input id="admin-password" value={password} onChange={(event) => onPassword(event.target.value)} type="password" autoComplete="current-password" /></label>
-          <button className="primary admin-auth-submit" onClick={onLogin} type="button"><ShieldCheck /> Entrar no painel</button>
+          {mode !== 'code' && mode !== 'reset' ? <label htmlFor="admin-email">E-mail<input id="admin-email" value={email} onChange={(event) => onEmail(event.target.value)} autoComplete="email" placeholder="admin@exemplo.com" /></label> : null}
+          {mode === 'login' ? <label htmlFor="admin-password">Senha<input id="admin-password" value={password} onChange={(event) => onPassword(event.target.value)} type="password" autoComplete="current-password" /></label> : null}
+          {mode === 'code' ? <label className="admin-code-field" htmlFor="admin-code"><span>Código de verificação</span><input id="admin-code" value={code} onChange={(event) => updateCode(event.target.value)} inputMode="numeric" autoComplete="one-time-code" maxLength={6} autoFocus />{codeSlots(code)}</label> : null}
+          {mode === 'reset' ? <><label className="admin-code-field" htmlFor="admin-reset-code"><span>Código recebido</span><input id="admin-reset-code" value={resetCode} onChange={(event) => setResetCode(onlyDigits(event.target.value).slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" maxLength={6} />{codeSlots(resetCode)}</label><label htmlFor="admin-new-password">Nova senha<input id="admin-new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} type="password" autoComplete="new-password" minLength={12} /></label><label htmlFor="admin-confirm-password">Confirmar senha<input id="admin-confirm-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" autoComplete="new-password" minLength={12} /></label></> : null}
+          {mode === 'login' ? <button className="primary admin-auth-submit" onClick={() => void submitLogin()} type="button" disabled={busy}><ShieldCheck /> {busy ? 'Validando...' : 'Continuar'}</button> : null}
+          {mode === 'code' ? <button className="primary admin-auth-submit" onClick={() => void verifyCode()} type="button" disabled={busy || code.length !== 6}><ShieldCheck /> {busy ? 'Verificando...' : 'Entrar no painel'}</button> : null}
+          {mode === 'forgot' ? <button className="primary admin-auth-submit" onClick={() => void submitForgot()} type="button" disabled={busy || !email}><ShieldCheck /> {busy ? 'Enviando...' : 'Enviar código'}</button> : null}
+          {mode === 'reset' ? <button className="primary admin-auth-submit" onClick={() => void submitReset()} type="button" disabled={busy || resetCode.length !== 6 || newPassword.length < 12 || newPassword !== confirmPassword}><ShieldCheck /> {busy ? 'Salvando...' : 'Alterar senha'}</button> : null}
         </div>
-        {error ? <p className="error admin-auth-error" role="alert">{error}</p> : null}
+        {shownError ? <p className="error admin-auth-error" role="alert">{shownError}</p> : null}
+        {info ? <p className="success admin-auth-success" role="status">{info}</p> : null}
+        <div className="admin-auth-links">
+          {mode === 'login' ? <button type="button" onClick={() => { setMode('forgot'); setLocalError(''); setInfo('') }}>Esqueci minha senha</button> : null}
+          {mode !== 'login' ? <button type="button" onClick={() => { setMode('login'); setLocalError(''); setInfo(''); setCode(''); setResetCode('') }}>Voltar ao login</button> : null}
+        </div>
         <p className="admin-auth-note">Acesso restrito. Sessão protegida pelo backend do portal.</p>
       </section>
     </main>
   )
 }
-
 
 
 
@@ -983,9 +1087,20 @@ function AdminsPanel({ admin, admins, invitations, allowedSites, onChanged }: { 
 function SettingsPanel({ admin, maintenance, appearance, allowedSites, selectedSiteId, siteAppearance, notices, saving, feedback, onChange, onSave, onResetSite }: { admin: AdminMe | null; maintenance: MaintenanceAdmin | null; appearance: PortalAppearance; allowedSites: AllowedSite[]; selectedSiteId: string; siteAppearance: PortalSiteAppearance | null; notices: AdminNotice[]; saving: boolean; feedback: string; onChange: (value: PortalAppearance) => void; onSave: () => void; onResetSite: () => void }) {
   const [device, setDevice] = useState<PreviewDevice>('mobile')
   const [previewState, setPreviewState] = useState<PreviewState>('initial')
+  const [uploadingLogo, setUploadingLogo] = useState(false)
   const selectedSite = allowedSites.find((site) => site.siteId === selectedSiteId)
   const scopeLabel = selectedSiteId === 'ALL' ? 'Configuração global' : selectedSite?.name || siteAppearance?.siteName || selectedSiteId
   const activeNotice = notices.find((notice) => notice.enabled && (notice.site === 'ALL' || notice.site === selectedSiteId))
+  const uploadLogo = async (file: File | undefined) => {
+    if (!file) return
+    setUploadingLogo(true)
+    try {
+      const media = await uploadImageAsset(file, 'logo')
+      onChange({ ...appearance, logoUrl: media.publicUrl })
+    } finally {
+      setUploadingLogo(false)
+    }
+  }
   const previewStates: Array<{ id: PreviewState; label: string }> = [
     { id: 'initial', label: 'Inicial' },
     { id: 'voucher', label: 'Voucher' },

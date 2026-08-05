@@ -10,6 +10,7 @@ export type PortalAppearance = { networkName: string; establishmentName: string;
 export type PortalSiteAppearance = PortalAppearance & { siteId: string; siteName: string; enabled: boolean; hasOverride: boolean }
 export type MaintenanceAdmin = { maintenanceEnabled: boolean; maintenanceActive: boolean; maintenanceScheduled: boolean; maintenanceTitle: string; maintenanceMessage: string; maintenanceStartAt?: string | null; maintenanceEndAt?: string | null; maintenanceImageUrl: string; maintenanceVisualConfig?: Record<string, unknown>; updatedAt?: string | null }
 export type AdminMe = { id: string; email: string; name: string; role: string; siteIds: string[]; canSelectAllSites: boolean }
+export type AdminLoginChallenge = { mfaRequired: true; email: string; expiresAt: string }
 export type AllowedSite = { siteId: string; name: string; allowed: boolean }
 export type SiteNode = { name: string; siteId?: string; status: string; aps: number; connectedClients: number; sessions: number; allowed?: boolean }
 export type AdminNotice = Notice & { enabled: boolean; createdAt: string; updatedAt: string }
