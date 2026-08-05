@@ -71,6 +71,7 @@ import {
   formatMinutes,
   formatPhone,
   fromDatetimeLocal,
+  isValidCpf,
   humanAudit,
   normalizeVoucher,
   onlyDigits,
@@ -82,6 +83,54 @@ import {
 import './styles.css'
 
 const asArray = <T,>(value: T[] | null | undefined): T[] => Array.isArray(value) ? value : []
+const DEFAULT_PORTAL_SETTINGS: PortalSettings = {
+  logoUrl: '/leaoreceita.png',
+  primaryColor: '#176b87',
+  bannerText: 'Portal de Acesso Wi-Fi',
+  welcomeText: 'Acesso seguro para visitantes',
+  successMessage: 'Acesso liberado.',
+  expiredMessage: 'Sua sessão expirou. Autentique-se novamente para continuar usando o Wi-Fi.',
+  networkName: 'WiFi Visitantes',
+  establishmentName: 'Receita Federal',
+  termsText: `TERMOS DE USO DA REDE WI-FI
+
+1. Dados coletados
+Para liberar o acesso, podemos registrar nome, CPF, e-mail, telefone, endereço MAC, endereço IP, horário de conexão e ponto de acesso utilizado.
+
+2. Finalidade
+Os dados são usados para identificar usuários da rede, garantir segurança, cumprir obrigações legais e prevenir uso indevido do serviço.
+
+3. Responsabilidade do usuário
+O uso da internet é de sua responsabilidade. É proibido acessar conteúdo ilegal, violar direitos autorais ou praticar atividades que comprometam a rede.
+
+4. Monitoramento
+O estabelecimento pode registrar tentativas de acesso e suspender conexões em caso de uso indevido ou suspeita de fraude.
+
+5. Privacidade (LGPD)
+Dados pessoais sensíveis são protegidos e armazenados pelo tempo necessário. Para solicitar exclusão dos seus dados, contate o responsável pelo estabelecimento.
+
+Ao marcar a opção abaixo, você confirma que leu e concorda com estas condições.`,
+  maintenanceMode: false,
+  maintenance: {
+    enabled: false,
+    active: false,
+    scheduled: false,
+    title: 'Portal em manutenção',
+    message: 'Estamos realizando ajustes para melhorar o acesso.',
+    startsAt: null,
+    endsAt: null,
+    imageUrl: '',
+    visualConfig: {},
+  },
+  notifications: [],
+  expirationWarningMinutes: [30, 10, 5],
+}
+
+const isPortalSettings = (value: unknown): value is PortalSettings => {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Partial<PortalSettings>
+  return typeof record.networkName === 'string' && typeof record.establishmentName === 'string' && Boolean(record.maintenance)
+}
 
 const safeStorageGet = (key: string, fallback = '') => {
   try {
@@ -133,16 +182,18 @@ function Portal() {
     if (params.clientMac) query.set('clientMac', params.clientMac)
     if (params.apMac) query.set('apMac', params.apMac)
     api<PortalSettings>(`/api/settings?${query.toString()}`)
-      .then(setSettings)
+      .then((data) => {
+        if (isPortalSettings(data)) setSettings(data)
+        else throw new ApiError(502, 'Resposta inválida do servidor do portal.')
+      })
       .catch((error) => {
-        setMessage(error.message)
-        setMessageTone('error')
+        console.warn('Falha ao carregar configuracao publica do portal', error)
       })
   }, [params.apMac, params.clientMac, params.site])
 
   useEffect(() => {
     if (!params.clientMac || stage !== 'released') return
-    const tick = () => api<SessionStatus>(`/api/session/status?clientMac=${encodeURIComponent(params.clientMac)}`).then((current) => { setSession(current); if (!current.authorized) { setStage('idle'); setMessage(settings?.expiredMessage || 'Sua sessao expirou. Autentique-se novamente para continuar usando o Wi-Fi.'); setMessageTone('error') } }).catch(() => undefined)
+    const tick = () => api<SessionStatus>(`/api/session/status?clientMac=${encodeURIComponent(params.clientMac)}`).then((current) => { setSession(current); if (!current.authorized) { setStage('idle'); setMessage(settings?.expiredMessage || 'Sua sessão expirou. Autentique-se novamente para continuar usando o Wi-Fi.'); setMessageTone('error') } }).catch(() => undefined)
     tick()
     const handle = window.setInterval(tick, 30000)
     return () => window.clearInterval(handle)
@@ -165,8 +216,9 @@ function Portal() {
     return () => window.clearInterval(handle)
   }, [emailExpiresAt])
 
-  const institutionName = portalInstitutionName(settings?.establishmentName)
-  const networkName = settings?.networkName || 'rede de visitantes'
+  const activeSettings = settings || DEFAULT_PORTAL_SETTINGS
+  const institutionName = portalInstitutionName(activeSettings.establishmentName)
+  const networkName = activeSettings.networkName || 'rede de visitantes'
   const isBusy = ['validating', 'authorizing', 'confirming', 'checking'].includes(stage)
   const basePayload = { ...params, termsAccepted: accepted }
 
@@ -192,31 +244,31 @@ function Portal() {
   const validate = () => {
     if (!accepted) {
       setFieldError('terms')
-      setMessage('E obrigatorio aceitar os termos de uso para continuar.')
+      setMessage('É obrigatório aceitar os termos de uso para continuar.')
       setMessageTone('error')
       return false
     }
     if (method === 'voucher' && normalizeVoucher(identifier).length < 3) {
       setFieldError('identifier')
-      setMessage('Informe um voucher valido.')
+      setMessage('Informe um voucher válido.')
       setMessageTone('error')
       return false
     }
-    if (method === 'cpf' && onlyDigits(identifier).length !== 11) {
+    if (method === 'cpf' && !isValidCpf(identifier)) {
       setFieldError('identifier')
-      setMessage('Informe um CPF completo no formato 000.000.000-00.')
+      setMessage('Informe um CPF válido no formato 000.000.000-00.')
       setMessageTone('error')
       return false
     }
     if (method === 'email' && !validEmail(identifier)) {
       setFieldError('identifier')
-      setMessage('Informe um email valido.')
+      setMessage('Informe um e-mail válido.')
       setMessageTone('error')
       return false
     }
     if (method === 'email' && (!codeRequested || emailCode.length < 4)) {
       setFieldError('code')
-      setMessage(codeRequested ? 'Informe o codigo recebido por email.' : 'Envie o codigo para seu email antes de liberar o acesso.')
+      setMessage(codeRequested ? 'Informe o código recebido por e-mail.' : 'Envie o código para seu e-mail antes de liberar o acesso.')
       setMessageTone('error')
       return false
     }
@@ -229,13 +281,13 @@ function Portal() {
     setFieldError('')
     if (!accepted) {
       setFieldError('terms')
-      setMessage('Aceite os termos de uso antes de solicitar o codigo.')
+      setMessage('Aceite os termos de uso antes de solicitar o código.')
       setMessageTone('error')
       return
     }
     if (!validEmail(identifier)) {
       setFieldError('identifier')
-      setMessage('Informe um email valido para receber o codigo.')
+      setMessage('Informe um e-mail válido para receber o código.')
       setMessageTone('error')
       return
     }
@@ -245,11 +297,11 @@ function Portal() {
       setCodeRequested(true)
       setEmailExpiresAt(response.expiresAt)
       setEmailCooldown(30)
-      setMessage('Codigo enviado para seu email. Verifique sua caixa de entrada e spam.')
+      setMessage('Se o endereço puder receber mensagens, enviaremos um código. Verifique sua caixa de entrada e spam.')
       setMessageTone('success')
       window.setTimeout(() => codeInputRef.current?.focus(), 80)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Nao foi possivel enviar o codigo.')
+      setMessage(error instanceof Error ? error.message : 'Não foi possível enviar o código.')
       setMessageTone('error')
     } finally {
       setEmailSending(false)
@@ -264,7 +316,7 @@ function Portal() {
     try {
       await wait(220)
       setStage('authorizing')
-      setMessage('Autorizando este dispositivo na rede...')
+      setMessage('Solicitando autorização na rede...')
       const path = method === 'voucher' ? '/api/auth/voucher' : method === 'cpf' ? '/api/auth/cpf' : '/api/auth/email/verify-code'
       const body = method === 'voucher'
         ? { ...basePayload, code: normalizeVoucher(identifier) }
@@ -273,34 +325,34 @@ function Portal() {
           : { ...basePayload, email: identifier.trim(), code: emailCode }
       const result = await api<AuthResponse>(path, { method: 'POST', body: JSON.stringify(body) })
       setStage('confirming')
-      if (!result.authorized) throw new Error('O UniFi ainda nao confirmou a autorizacao.')
+      if (!result.authorized) throw new Error('O UniFi ainda não confirmou a autorização.')
       await wait(220)
       setStage('checking')
       const current = await api<SessionStatus>(`/api/session/status?clientMac=${encodeURIComponent(params.clientMac)}`)
-      if (!current.authorized) throw new Error('A sessao ainda nao aparece como autorizada.')
+      if (!current.authorized) throw new Error('A sessão ainda não aparece como autorizada.')
       setSession(current)
-      setMessage(method === 'email' ? 'Email confirmado. Liberando seu acesso...' : 'Acesso liberado com sucesso.')
+      setMessage(method === 'email' ? 'E-mail confirmado. Liberando seu acesso...' : 'Acesso liberado com sucesso.')
       setMessageTone('success')
       setStage('released')
     } catch (error) {
       setStage('error')
-      setMessage(error instanceof Error ? error.message : 'Nao foi possivel liberar o acesso.')
+      setMessage(error instanceof Error ? error.message : 'Não foi possível liberar o acesso.')
       setMessageTone('error')
     }
   }
 
   useEffect(() => {
     if (method === 'email' && codeRequested && emailCode.length === 6 && stage === 'idle' && !emailSending) {
-      setMessage('Verificando codigo...')
+      setMessage('Verificando código...')
       setMessageTone('info')
       void submit()
     }
   }, [codeRequested, emailCode, emailSending, method, stage])
 
-  if (settings?.maintenance.active) return <MaintenanceScreen settings={settings} />
+  if (activeSettings.maintenance.active) return <MaintenanceScreen settings={activeSettings} />
 
   return <PublicPortalExperience
-    settings={settings || { logoUrl: '', primaryColor: '#176b87', bannerText: 'Portal de Acesso Wi-Fi', welcomeText: 'Acesso seguro para visitantes', successMessage: 'Acesso liberado.', networkName, establishmentName: institutionName, termsText: 'Ao continuar, voc? aceita os termos de uso da rede.' }}
+    settings={settings || { logoUrl: '', primaryColor: '#176b87', bannerText: 'Portal de Acesso Wi-Fi', welcomeText: 'Acesso seguro para visitantes', successMessage: 'Acesso liberado.', networkName, establishmentName: institutionName, termsText: 'Ao continuar, você aceita os termos de uso da rede.' }}
     institutionName={institutionName}
     networkName={networkName}
     ssid={params.ssid}
@@ -314,7 +366,7 @@ function Portal() {
     message={message}
     messageTone={messageTone}
     fieldError={fieldError}
-    notices={settings?.notifications ?? []}
+    notices={activeSettings.notifications ?? []}
     isBusy={isBusy}
     codeRequested={codeRequested}
     emailSending={emailSending}
@@ -339,7 +391,7 @@ function Portal() {
 }
 function MaintenanceScreen({ settings }: { settings: PortalSettings }) {
   const item = settings.maintenance
-  return <main className="portal-shell maintenance" style={cssVars(settings)}><section className="panel maintenance-card">{item.imageUrl ? <img src={item.imageUrl} alt="" /> : <Clock className="hero-icon" />}<span className="portal-eyebrow">{settings.establishmentName}</span><h1>{item.title}</h1><p>{item.message}</p>{item.startsAt ? <p className="meta">Início: {formatClock(item.startsAt)}</p> : null}{item.endsAt ? <p className="meta">Previsao de retorno: {formatClock(item.endsAt)}</p> : null}</section></main>
+  return <main className="portal-shell maintenance" style={cssVars(settings)}><section className="panel maintenance-card">{item.imageUrl ? <img src={item.imageUrl} alt="" /> : <Clock className="hero-icon" />}<span className="portal-eyebrow">{settings.establishmentName}</span><h1>{item.title}</h1><p>{item.message}</p>{item.startsAt ? <p className="meta">Início: {formatClock(item.startsAt)}</p> : null}{item.endsAt ? <p className="meta">Previsão de retorno: {formatClock(item.endsAt)}</p> : null}</section></main>
 }
 
 function Admin() {
@@ -655,15 +707,20 @@ class AdminSectionErrorBoundary extends Component<AdminSectionErrorBoundaryProps
 
 function AdminLogin({ email, password, error, onEmail, onPassword, onLogin }: { email: string; password: string; error: string; onEmail: (value: string) => void; onPassword: (value: string) => void; onLogin: () => void }) {
   return (
-    <main className="portal-shell admin-login-shell">
-      <section className="panel admin-card" aria-labelledby="admin-login-title">
-        <div className="brand"><ShieldCheck aria-hidden="true" /><span>Portal administrativo</span></div>
-        <h1 id="admin-login-title">Acesso administrativo</h1>
-        <p className="muted">Entre para acompanhar acessos, avisos, vouchers e manutencoes do portal.</p>
-        <label htmlFor="admin-email">Email<input id="admin-email" value={email} onChange={(event) => onEmail(event.target.value)} autoComplete="email" /></label>
-        <label htmlFor="admin-password">Senha<input id="admin-password" value={password} onChange={(event) => onPassword(event.target.value)} type="password" autoComplete="current-password" /></label>
-        <button className="primary" onClick={onLogin} type="button">Entrar</button>
-        {error ? <p className="error" role="alert">{error}</p> : null}
+    <main className="portal-shell admin-login-shell admin-auth-shell">
+      <section className="panel admin-card admin-auth-card" aria-labelledby="admin-login-title">
+        <div className="admin-auth-icon"><ShieldCheck aria-hidden="true" /></div>
+        <div className="admin-auth-heading">
+          <h1 id="admin-login-title">Painel administrativo</h1>
+          <p>Entre para acompanhar acessos, avisos, vouchers e manutenção do portal.</p>
+        </div>
+        <div className="admin-auth-form">
+          <label htmlFor="admin-email">E-mail<input id="admin-email" value={email} onChange={(event) => onEmail(event.target.value)} autoComplete="email" placeholder="admin@exemplo.com" /></label>
+          <label htmlFor="admin-password">Senha<input id="admin-password" value={password} onChange={(event) => onPassword(event.target.value)} type="password" autoComplete="current-password" /></label>
+          <button className="primary admin-auth-submit" onClick={onLogin} type="button"><ShieldCheck /> Entrar no painel</button>
+        </div>
+        {error ? <p className="error admin-auth-error" role="alert">{error}</p> : null}
+        <p className="admin-auth-note">Acesso restrito. Sessão protegida pelo backend do portal.</p>
       </section>
     </main>
   )
@@ -895,7 +952,7 @@ function AdminsPanel({ admin, admins, invitations, allowedSites, onChanged }: { 
     }
   }
 
-  return <div className="admin-content"><PageHeader title="Administradores" description="Convide novos administradores com RBAC e escopo de unidades." action={canManage ? <button className="soft-button" type="button" onClick={() => { setForm({ name: '', email: '', role: 'ADMIN', siteIds: allowedSites.map((site) => site.siteId) }); setOpen(true); setMessage(''); setInvite(null) }}><UserCog /> Novo administrador</button> : null} />{message ? <p className={message.includes('sucesso') || message.includes('criado') ? 'success admin-inline-feedback' : 'error admin-inline-feedback'} role="status">{message}</p> : null}<Panel title="Administradores" icon={<UserCog />}>{admins.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Nome</th><th>Email</th><th>Role</th><th>Sites</th><th>Status</th><th>MFA</th><th>Último login</th><th>Criado em</th><th>Ações</th></tr></thead><tbody>{admins.map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.email}</td><td>{row.role}</td><td>{adminSiteLabel(row)}</td><td>{row.status}</td><td>{row.mfa === 'not_configured' ? 'Não configurado' : row.mfa}</td><td>{formatClock(row.lastLogin)}</td><td>{formatClock(row.createdAt)}</td><td>{canManage && row.role !== 'SUPERADMIN' ? <button className="table-action" type="button" onClick={() => openAccessEditor(row)}>Sites</button> : <span className="muted-cell">Global</span>}</td></tr>)}</tbody></table></div> : <EmptyState message={canManage ? 'Nenhum administrador adicional encontrado.' : 'Somente SUPERADMIN pode listar administradores.'} />}</Panel><Panel title="Convites administrativos" icon={<UserCog />}><div className="invite-summary-row"><span>Pendentes: {invitationSummary.pending}</span><span>Expirados: {invitationSummary.expired}</span><span>Revogados: {invitationSummary.revoked}</span></div>{invitations.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Nome</th><th>Email</th><th>Role</th><th>Sites</th><th>Status</th><th>Expira em</th><th>A??es</th></tr></thead><tbody>{invitations.map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.email}</td><td>{row.role}</td><td>{asArray(row.siteIds).length ? asArray(row.siteIds).map(siteLabel).join(', ') : 'Acesso global'}</td><td>{row.deliveryStatus}</td><td>{formatClock(row.expiresAt)}</td><td><div className="table-actions-inline"><button className="table-action" type="button" onClick={() => void renewInvite(row.id)} disabled={busy || row.deliveryStatus === 'ACCEPTED'}>Novo link</button>{row.inviteUrl ? <button className="table-action" type="button" onClick={() => void copyToClipboard(row.inviteUrl || '')}>Copiar</button> : null}<button className="table-action danger-text" type="button" onClick={() => void revokeInvite(row.id)} disabled={busy || row.deliveryStatus === 'ACCEPTED' || row.deliveryStatus === 'REVOKED'}>Revogar</button></div></td></tr>)}</tbody></table></div> : <EmptyState message="Nenhum convite administrativo encontrado." />}</Panel>{open ? <div className="modal-backdrop centered" role="presentation"><section className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="admin-invite-title"><div className="modal-head"><div><span>RBAC</span><h2 id="admin-invite-title">Convidar administrador</h2></div><button type="button" aria-label="Fechar" onClick={() => setOpen(false)}><X /></button></div><div className="panel-form"><label htmlFor="invite-name">Nome<input id="invite-name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} autoComplete="name" /></label><label htmlFor="invite-email">Email<input id="invite-email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} autoComplete="email" /></label><label htmlFor="invite-role">Perfil<select id="invite-role" value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="ADMIN">ADMIN</option><option value="VIEWER">VIEWER</option><option value="SUPERADMIN">SUPERADMIN</option></select></label>{form.role !== 'SUPERADMIN' ? <fieldset className="site-checks"><legend>Unidades permitidas</legend>{allowedSites.length ? allowedSites.map((site) => <label className="checkline" key={site.siteId}><input type="checkbox" checked={form.siteIds.includes(site.siteId)} onChange={() => toggleInviteSite(site.siteId)} /> {site.name}</label>) : <p className="panel-note">Nenhuma unidade permitida foi retornada pela API.</p>}</fieldset> : <p className="panel-note">SUPERADMIN possui acesso global ao painel.</p>}<button className="primary admin-save" type="button" onClick={() => void createInvite()} disabled={busy || (form.role !== 'SUPERADMIN' && !form.siteIds.length)}>{busy ? 'Enviando...' : 'Enviar convite'}</button>{invite ? <div className="invite-result"><span>{invite.deliveryStatus === 'sent' ? 'Email enviado' : 'Envio de email pendente'}</span><strong>{invite.email}</strong><p>Expira em {formatClock(invite.expiresAt)}</p>{asArray(invite.siteIds).length ? <p>Sites: {asArray(invite.siteIds).map(siteLabel).join(', ')}</p> : <p>Sites: acesso global</p>}{invite.inviteUrl ? <div className="copy-field"><input aria-label="Link do convite" readOnly value={invite.inviteUrl} /><button className="icon-table-action" type="button" aria-label="Copiar link do convite" onClick={() => void copyToClipboard(invite.inviteUrl || '')}><Copy /></button></div> : null}</div> : null}</div></section></div> : null}{editingAccess ? <div className="modal-backdrop centered" role="presentation"><section className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="site-access-title"><div className="modal-head"><div><span>Permissões</span><h2 id="site-access-title">Sites de {editingAccess.name}</h2></div><button type="button" aria-label="Fechar" onClick={() => setEditingAccess(null)}><X /></button></div><div className="panel-form"><fieldset className="site-checks"><legend>Unidades permitidas</legend>{allowedSites.map((site) => <label className="checkline" key={site.siteId}><input type="checkbox" checked={accessSiteIds.includes(site.siteId)} onChange={() => toggleAccessSite(site.siteId)} /> {site.name}</label>)}</fieldset><button className="primary admin-save" type="button" onClick={() => void saveAccess()} disabled={busy || !accessSiteIds.length}>{busy ? 'Salvando...' : 'Salvar permissões'}</button></div></section></div> : null}</div>
+  return <div className="admin-content"><PageHeader title="Administradores" description="Convide novos administradores com RBAC e escopo de unidades." action={canManage ? <button className="soft-button" type="button" onClick={() => { setForm({ name: '', email: '', role: 'ADMIN', siteIds: allowedSites.map((site) => site.siteId) }); setOpen(true); setMessage(''); setInvite(null) }}><UserCog /> Novo administrador</button> : null} />{message ? <p className={message.includes('sucesso') || message.includes('criado') ? 'success admin-inline-feedback' : 'error admin-inline-feedback'} role="status">{message}</p> : null}<Panel title="Administradores" icon={<UserCog />}>{admins.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Nome</th><th>Email</th><th>Role</th><th>Sites</th><th>Status</th><th>MFA</th><th>Último login</th><th>Criado em</th><th>Ações</th></tr></thead><tbody>{admins.map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.email}</td><td>{row.role}</td><td>{adminSiteLabel(row)}</td><td>{row.status}</td><td>{row.mfa === 'not_configured' ? 'Não configurado' : row.mfa}</td><td>{formatClock(row.lastLogin)}</td><td>{formatClock(row.createdAt)}</td><td>{canManage && row.role !== 'SUPERADMIN' ? <button className="table-action" type="button" onClick={() => openAccessEditor(row)}>Sites</button> : <span className="muted-cell">Global</span>}</td></tr>)}</tbody></table></div> : <EmptyState message={canManage ? 'Nenhum administrador adicional encontrado.' : 'Somente SUPERADMIN pode listar administradores.'} />}</Panel><Panel title="Convites administrativos" icon={<UserCog />}><div className="invite-summary-row"><span>Pendentes: {invitationSummary.pending}</span><span>Expirados: {invitationSummary.expired}</span><span>Revogados: {invitationSummary.revoked}</span></div>{invitations.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Nome</th><th>Email</th><th>Role</th><th>Sites</th><th>Status</th><th>Expira em</th><th>Ações</th></tr></thead><tbody>{invitations.map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.email}</td><td>{row.role}</td><td>{asArray(row.siteIds).length ? asArray(row.siteIds).map(siteLabel).join(', ') : 'Acesso global'}</td><td>{row.deliveryStatus}</td><td>{formatClock(row.expiresAt)}</td><td><div className="table-actions-inline"><button className="table-action" type="button" onClick={() => void renewInvite(row.id)} disabled={busy || row.deliveryStatus === 'ACCEPTED'}>Novo link</button>{row.inviteUrl ? <button className="table-action" type="button" onClick={() => void copyToClipboard(row.inviteUrl || '')}>Copiar</button> : null}<button className="table-action danger-text" type="button" onClick={() => void revokeInvite(row.id)} disabled={busy || row.deliveryStatus === 'ACCEPTED' || row.deliveryStatus === 'REVOKED'}>Revogar</button></div></td></tr>)}</tbody></table></div> : <EmptyState message="Nenhum convite administrativo encontrado." />}</Panel>{open ? <div className="modal-backdrop centered" role="presentation"><section className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="admin-invite-title"><div className="modal-head"><div><span>RBAC</span><h2 id="admin-invite-title">Convidar administrador</h2></div><button type="button" aria-label="Fechar" onClick={() => setOpen(false)}><X /></button></div><div className="panel-form"><label htmlFor="invite-name">Nome<input id="invite-name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} autoComplete="name" /></label><label htmlFor="invite-email">Email<input id="invite-email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} autoComplete="email" /></label><label htmlFor="invite-role">Perfil<select id="invite-role" value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="ADMIN">ADMIN</option><option value="VIEWER">VIEWER</option><option value="SUPERADMIN">SUPERADMIN</option></select></label>{form.role !== 'SUPERADMIN' ? <fieldset className="site-checks"><legend>Unidades permitidas</legend>{allowedSites.length ? allowedSites.map((site) => <label className="checkline" key={site.siteId}><input type="checkbox" checked={form.siteIds.includes(site.siteId)} onChange={() => toggleInviteSite(site.siteId)} /> {site.name}</label>) : <p className="panel-note">Nenhuma unidade permitida foi retornada pela API.</p>}</fieldset> : <p className="panel-note">SUPERADMIN possui acesso global ao painel.</p>}<button className="primary admin-save" type="button" onClick={() => void createInvite()} disabled={busy || (form.role !== 'SUPERADMIN' && !form.siteIds.length)}>{busy ? 'Enviando...' : 'Enviar convite'}</button>{invite ? <div className="invite-result"><span>{invite.deliveryStatus === 'sent' ? 'Email enviado' : 'Envio de email pendente'}</span><strong>{invite.email}</strong><p>Expira em {formatClock(invite.expiresAt)}</p>{asArray(invite.siteIds).length ? <p>Sites: {asArray(invite.siteIds).map(siteLabel).join(', ')}</p> : <p>Sites: acesso global</p>}{invite.inviteUrl ? <div className="copy-field"><input aria-label="Link do convite" readOnly value={invite.inviteUrl} /><button className="icon-table-action" type="button" aria-label="Copiar link do convite" onClick={() => void copyToClipboard(invite.inviteUrl || '')}><Copy /></button></div> : null}</div> : null}</div></section></div> : null}{editingAccess ? <div className="modal-backdrop centered" role="presentation"><section className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="site-access-title"><div className="modal-head"><div><span>Permissões</span><h2 id="site-access-title">Sites de {editingAccess.name}</h2></div><button type="button" aria-label="Fechar" onClick={() => setEditingAccess(null)}><X /></button></div><div className="panel-form"><fieldset className="site-checks"><legend>Unidades permitidas</legend>{allowedSites.map((site) => <label className="checkline" key={site.siteId}><input type="checkbox" checked={accessSiteIds.includes(site.siteId)} onChange={() => toggleAccessSite(site.siteId)} /> {site.name}</label>)}</fieldset><button className="primary admin-save" type="button" onClick={() => void saveAccess()} disabled={busy || !accessSiteIds.length}>{busy ? 'Salvando...' : 'Salvar permissões'}</button></div></section></div> : null}</div>
 }
 function SettingsPanel({ admin, maintenance, appearance, allowedSites, selectedSiteId, siteAppearance, notices, saving, feedback, onChange, onSave, onResetSite }: { admin: AdminMe | null; maintenance: MaintenanceAdmin | null; appearance: PortalAppearance; allowedSites: AllowedSite[]; selectedSiteId: string; siteAppearance: PortalSiteAppearance | null; notices: AdminNotice[]; saving: boolean; feedback: string; onChange: (value: PortalAppearance) => void; onSave: () => void; onResetSite: () => void }) {
   const [device, setDevice] = useState<PreviewDevice>('mobile')

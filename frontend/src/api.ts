@@ -53,10 +53,14 @@ export const api = async <T,>(path: string, init: RequestInit = {}): Promise<T> 
     ...init,
     headers,
   })
-  const data = await response.json().catch(() => ({}))
+  const contentType = response.headers.get('content-type') || ''
+  const data = contentType.includes('application/json') ? await response.json().catch(() => ({})) : {}
   if (!response.ok) {
     const detail = data.detail ?? data.message
     throw new ApiError(response.status, fallbackMessage(response.status, detail), detail)
+  }
+  if (!contentType.includes('application/json')) {
+    throw new ApiError(502, 'Resposta inválida do servidor do portal.', undefined)
   }
   return data as T
 }

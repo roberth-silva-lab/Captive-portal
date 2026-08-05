@@ -2,7 +2,7 @@ import type { PortalAppearance, PreviewDevice, PreviewState } from '../types'
 import { portalInstitutionName } from '../utils'
 import { PublicPortalExperience } from './public-portal-experience'
 
-export function PublicPortalPreview({ appearance, device, state = 'initial', noticeTitle = 'Aviso do portal', noticeMessage = 'Comunicado vis?vel para esta unidade.', maintenanceTitle = 'Portal em manuten??o', maintenanceMessage = 'Estamos realizando ajustes para melhorar o acesso.' }: { appearance: PortalAppearance; device: PreviewDevice; state?: PreviewState; noticeTitle?: string; noticeMessage?: string; maintenanceTitle?: string; maintenanceMessage?: string }) {
+export function PublicPortalPreview({ appearance, device, state = 'initial', noticeTitle = 'Aviso do portal', noticeMessage = 'Comunicado visível para esta unidade.', maintenanceTitle = 'Portal em manutenção', maintenanceMessage = 'Estamos realizando ajustes para melhorar o acesso.' }: { appearance: PortalAppearance; device: PreviewDevice; state?: PreviewState; noticeTitle?: string; noticeMessage?: string; maintenanceTitle?: string; maintenanceMessage?: string }) {
   return <div className="public-preview-shell"><PublicPortalExperience
     settings={appearance}
     device={device}

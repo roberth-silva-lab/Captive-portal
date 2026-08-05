@@ -7,6 +7,8 @@ import { copyToClipboard, exportCsv, formatClock, fromDatetimeLocal } from '../u
 import { PageHeader } from './admin-layout'
 import { ConfirmDialog, EmptyState, Panel } from './shared'
 
+const escapeHtml = (value: string) => value.replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char] || char)
+
 const voucherStatuses = ['Disponível', 'Em uso', 'Utilizado', 'Expirado', 'Revogado']
 
 const defaultSiteOption = (allowedSites: AllowedSite[], selectedSiteId: string) => {
@@ -80,14 +82,14 @@ export function VoucherPanel({ vouchers, allowedSites, selectedSiteId, onChanged
   }
 
   const printCreated = () => {
-    const printable = document.getElementById('created-vouchers-print')?.innerHTML
-    if (!printable) return
+    if (!created.length) return
+    const cards = created.map((voucher) => `<article class="voucher-print-card"><span>${escapeHtml(voucher.site)} - ${voucher.durationMinutes} min</span><strong>${escapeHtml(voucher.code)}</strong><small>${escapeHtml(voucher.expiresAt ? `Expira em ${formatClock(voucher.expiresAt)}` : 'Sem expira??o definida')}</small></article>`).join('')
     const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=760,height=720')
     if (!printWindow) {
       window.print()
       return
     }
-    printWindow.document.write(`<html><head><title>Vouchers</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#17212b}.voucher-print-card{border:1px solid #d8e4e0;border-radius:8px;padding:14px;margin:10px 0}.voucher-print-card strong{font-size:22px;letter-spacing:.08em}</style></head><body>${printable}</body></html>`)
+    printWindow.document.write(`<html><head><title>Vouchers</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#17212b}.voucher-print-card{border:1px solid #d8e4e0;border-radius:8px;padding:14px;margin:10px 0}.voucher-print-card strong{display:block;font-size:22px;letter-spacing:.08em}.voucher-print-card span,.voucher-print-card small{color:#65746f}</style></head><body>${cards}</body></html>`)
     printWindow.document.close()
     printWindow.focus()
     printWindow.print()

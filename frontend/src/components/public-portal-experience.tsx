@@ -1,5 +1,5 @@
-import { AlertTriangle, Bell, CheckCircle2, Clock, Mail, ShieldCheck, Ticket, UserRound, Wifi, X } from 'lucide-react'
-import type { CSSProperties, RefObject } from 'react'
+import { AlertTriangle, ArrowLeft, ArrowRight, Bell, CheckCircle2, Clock, FileCheck, LogIn, Mail, ShieldCheck, Ticket, UserRound, Wifi, X } from 'lucide-react'
+import type { CSSProperties, ReactNode, RefObject } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { Method, Notice, PortalAppearance, PortalSettings, PreviewDevice, PreviewState, SessionStatus, Stage } from '../types'
@@ -52,6 +52,66 @@ type PublicPortalExperienceProps = {
   onAcceptTerms?: () => void
 }
 
+const DEFAULT_LOGO_URL = '/leaoreceita.png'
+const DEFAULT_TERMS_TEXT = `TERMOS DE USO DA REDE WI-FI
+
+1. Dados coletados
+Para liberar o acesso, podemos registrar nome, CPF, e-mail, telefone, endere\u00e7o MAC, endere\u00e7o IP, hor\u00e1rio de conex\u00e3o e ponto de acesso utilizado.
+
+2. Finalidade
+Os dados s\u00e3o usados para identificar usu\u00e1rios da rede, garantir seguran\u00e7a, cumprir obriga\u00e7\u00f5es legais e prevenir uso indevido do servi\u00e7o.
+
+3. Responsabilidade do usu\u00e1rio
+O uso da internet \u00e9 de sua responsabilidade. \u00c9 proibido acessar conte\u00fado ilegal, violar direitos autorais ou praticar atividades que comprometam a rede.
+
+4. Monitoramento
+O estabelecimento pode registrar tentativas de acesso e suspender conex\u00f5es em caso de uso indevido ou suspeita de fraude.
+
+5. Privacidade (LGPD)
+Dados pessoais sens\u00edveis s\u00e3o protegidos e armazenados pelo tempo necess\u00e1rio. Para solicitar exclus\u00e3o dos seus dados, contate o respons\u00e1vel pelo estabelecimento.
+
+Ao marcar a op\u00e7\u00e3o abaixo, voc\u00ea confirma que leu e concorda com estas condi\u00e7\u00f5es.`
+
+const text = {
+  hotspot: 'Hotspot para convidados',
+  wifiAccess: 'Portal de Acesso Wi-Fi',
+  secureAccess: 'Acesso Wi-Fi seguro',
+  welcomeTitle: 'Bem-vindo ao Wi-Fi para visitantes',
+  welcomeFallback: 'Acesso seguro para visitantes',
+  institution: 'Institui\u00e7\u00e3o',
+  network: 'Rede',
+  termsTitle: 'Termos de uso',
+  termsAndPrivacy: 'Termos de uso e privacidade',
+  termsAccept: 'Li e aceito os ',
+  privacySuffix: ' e a pol\u00edtica de privacidade da rede.',
+  continue: 'Continuar',
+  choosePrompt: 'Como deseja entrar?',
+  chooseTitle: 'Escolha uma forma de acesso',
+  chooseDescription: 'Use apenas uma forma de identifica\u00e7\u00e3o para liberar este dispositivo.',
+  back: 'Voltar',
+  protected: 'Ambiente institucional protegido',
+  authorizingTitle: 'Preparando seu acesso',
+  authorizingFallback: 'Aguarde enquanto confirmamos a autoriza\u00e7\u00e3o na rede.',
+  maintenance: 'Portal em manuten\u00e7\u00e3o',
+  maintenanceFallback: 'Estamos realizando ajustes para melhorar o acesso.',
+  status: 'Status do portal',
+  starts: 'In\u00edcio',
+  returns: 'Previs\u00e3o de retorno',
+  tryAgain: 'Tentar novamente',
+  noticeFallback: 'Comunicado vis\u00edvel para esta unidade.',
+  accessReleased: 'Acesso liberado',
+  successFallback: 'Tudo certo. Voc\u00ea j\u00e1 pode navegar na Internet.',
+  internet: 'Continuar para a Internet',
+  usedMethod: 'Método usado',
+  authorizedAt: 'Autorizada em',
+  remaining: 'Tempo restante',
+  emailSentTitle: 'C\u00f3digo enviado',
+  emailSentBody: 'Enviamos um c\u00f3digo de 6 d\u00edgitos para o e-mail informado.',
+  emailSpam: 'Verifique tamb\u00e9m sua pasta de spam.',
+  emailCode: 'C\u00f3digo recebido',
+  emailCodeHelp: 'Digite os 6 n\u00fameros. A verifica\u00e7\u00e3o acontece automaticamente.',
+}
+
 const methodLabel = (method: Method) => method === 'cpf' ? 'CPF' : method === 'email' ? 'E-mail' : 'Voucher'
 
 const previewMethod = (state?: PreviewState): Method => {
@@ -60,6 +120,26 @@ const previewMethod = (state?: PreviewState): Method => {
   return 'voucher'
 }
 
+const methodCopy: Record<Method, { title: string; description: string; icon: ReactNode }> = {
+  voucher: { title: 'Voucher', description: 'C\u00f3digo fornecido pela administra\u00e7\u00e3o', icon: <Ticket /> },
+  cpf: { title: 'CPF', description: 'Cadastro r\u00e1pido com seus dados', icon: <UserRound /> },
+  email: { title: 'E-mail', description: 'C\u00f3digo enviado para seu e-mail', icon: <Mail /> },
+}
+
+const flowSteps = [
+  { icon: <Wifi />, label: 'Conecte-se ao Wi-Fi' },
+  { icon: <FileCheck />, label: 'Aceite os termos' },
+  { icon: <LogIn />, label: 'Fa\u00e7a login' },
+]
+
+const normalizeTermsText = (value?: string) => {
+  const trimmed = value?.trim() || ''
+  const simplified = trimmed.toLowerCase()
+  if (!trimmed || trimmed.length < 140 || simplified === 'ao continuar, você aceita os termos de uso da rede.') return DEFAULT_TERMS_TEXT
+  return trimmed
+}
+
+const voucherChars = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8).split('')
 export function PublicPortalExperience(props: PublicPortalExperienceProps) {
   const preview = Boolean(props.previewState)
   const method = preview ? previewMethod(props.previewState) : props.method
@@ -76,59 +156,107 @@ export function PublicPortalExperience(props: PublicPortalExperienceProps) {
   }, [isMaintenance, isReleased, preview, props.accepted, props.previewState, props.stage])
   const style = cssVars(props.settings) as CSSProperties
   const frameClass = preview ? `public-preview-frame ${props.device || 'mobile'}` : 'public-live-frame'
+  const logoUrl = props.settings.logoUrl?.trim() || DEFAULT_LOGO_URL
+  const networkLabel = props.ssid || props.networkName || props.settings.networkName
+
   return (
-    <main className={`portal-shell public-portal-shell ${preview ? 'preview-mode' : ''}`} style={style}>
-      <section className={`panel portal-card public-portal-card ${frameClass}`} aria-labelledby="portal-title">
-        <header className="portal-brand">
-          <div className="portal-brand-mark" aria-hidden="true">{props.settings.logoUrl ? <img src={props.settings.logoUrl} alt="" /> : <ShieldCheck />}</div>
-          <div>
-            <span className="portal-eyebrow">{props.settings.bannerText || 'Portal de Acesso Wi-Fi'}</span>
-            <strong>{props.institutionName}</strong>
-            <p>{props.settings.welcomeText || 'Acesso seguro para visitantes'}</p>
-          </div>
+    <main className={`portal-shell public-portal-shell public-hotspot-shell ${preview ? 'preview-mode' : ''}`} style={style}>
+      <div className="public-hotspot-backdrop" aria-hidden="true" />
+      <header className="public-hotspot-topbar" aria-label="Identifica\u00e7\u00e3o do portal">
+        <div className="public-hotspot-topmark" aria-hidden="true"><img src={logoUrl} alt="" /></div>
+        <div><strong>{props.institutionName}</strong><span>{text.hotspot}</span></div>
+      </header>
+
+      <section className={`panel portal-card public-portal-card public-hotspot-card ${frameClass}`} aria-labelledby="portal-title">
+        <header className="portal-brand public-hotspot-brand">
+          <div className="portal-brand-mark public-hotspot-logo" aria-hidden="true"><img src={logoUrl} alt="" /></div>
+          <div><span className="portal-eyebrow">{props.settings.bannerText || text.wifiAccess}</span><strong>{props.institutionName}</strong><p>{networkLabel}</p></div>
         </header>
 
-        {shouldShowNotice ? <NoticeList notices={props.notices?.length ? props.notices : [{ id: 'preview', type: 'INFO', title: 'Aviso do portal', message: 'Comunicado vis?vel para esta unidade.', site: 'ALL' }]} /> : <NoticeList notices={props.notices ?? []} />}
-
-        {flowStep === 'maintenance' ? <MaintenanceContent title={props.maintenanceTitle || 'Portal em manuten??o'} message={props.maintenanceMessage || props.message || 'Estamos realizando ajustes para melhorar o acesso.'} imageUrl={props.maintenanceImageUrl} startsAt={props.maintenanceStartsAt} endsAt={props.maintenanceEndsAt} /> : null}
-        {flowStep === 'success' ? <SuccessContent session={props.session} method={method} networkName={props.networkName} redirectUrl={props.redirectUrl} successMessage={props.settings.successMessage} /> : null}
-        {flowStep === 'welcome' ? <WelcomeStep settings={props.settings} networkName={props.networkName} accepted={props.accepted} fieldError={props.fieldError} onAcceptedChange={props.onAcceptedChange} onOpenTerms={props.onOpenTerms} onSubmit={props.onSubmit} preview={preview} /> : null}
-        {flowStep === 'method' ? <MethodStep {...props} method={method} preview={preview} /> : null}
+        {!isMaintenance && !isReleased ? <FlowIndicator accepted={props.accepted || preview} methodReady={flowStep === 'method' || flowStep === 'authorizing'} /> : null}
+        {shouldShowNotice ? <NoticeList notices={props.notices?.length ? props.notices : [{ id: 'preview', type: 'INFO', title: 'Aviso do portal', message: text.noticeFallback, site: 'ALL' }]} /> : <NoticeList notices={props.notices ?? []} />}
+        {flowStep === 'maintenance' ? <MaintenanceContent title={props.maintenanceTitle || text.maintenance} message={props.maintenanceMessage || props.message || text.maintenanceFallback} imageUrl={props.maintenanceImageUrl || logoUrl} startsAt={props.maintenanceStartsAt} endsAt={props.maintenanceEndsAt} /> : null}
+        {flowStep === 'success' ? <SuccessContent session={props.session} method={method} networkName={networkLabel} redirectUrl={props.redirectUrl} successMessage={props.settings.successMessage} /> : null}
+        {flowStep === 'welcome' ? <WelcomeStep settings={props.settings} institutionName={props.institutionName} networkName={networkLabel} accepted={props.accepted} fieldError={props.fieldError} onAcceptedChange={props.onAcceptedChange} onOpenTerms={props.onOpenTerms} onSubmit={props.onSubmit} preview={preview} /> : null}
+        {flowStep === 'method' ? <MethodStep {...props} method={method} networkName={networkLabel} preview={preview} /> : null}
         {flowStep === 'authorizing' ? <AuthorizationStep stage={props.stage} message={props.message} messageTone={props.messageTone} /> : null}
-        {props.stage === 'error' && props.message ? <p className="feedback error" role="status">{props.message}</p> : null}
-        <div className="portal-footer-info">
-          <span className="network-chip"><Wifi /> {props.ssid || props.networkName}</span>
-          <small>Ambiente institucional protegido</small>
-        </div>
+        {props.stage === 'error' && props.message ? <p className="feedback error public-inline-feedback" role="status">{props.message}</p> : null}
+        <div className="portal-footer-info"><span className="network-chip"><Wifi /> {networkLabel}</span><small>{text.protected}</small></div>
       </section>
-      {props.termsOpen ? <TermsModal text={props.settings.termsText} onClose={props.onCloseTerms || (() => undefined)} onAccept={props.onAcceptTerms || (() => undefined)} /> : null}
+      {props.termsOpen ? <TermsModal text={normalizeTermsText(props.settings.termsText)} onClose={props.onCloseTerms || (() => undefined)} onAccept={props.onAcceptTerms || (() => undefined)} /> : null}
     </main>
   )
 }
 
-function WelcomeStep({ settings, networkName, accepted, fieldError, onAcceptedChange, onOpenTerms, onSubmit, preview }: { settings: PublicExperienceSettings | PortalAppearance; networkName: string; accepted: boolean; fieldError?: string; onAcceptedChange?: (value: boolean) => void; onOpenTerms?: () => void; onSubmit?: () => void; preview: boolean }) {
-  return <div className="portal-step welcome-step"><div className="portal-heading"><h1 id="portal-title">{settings.bannerText || 'Portal de Acesso Wi-Fi'}</h1><p>{settings.welcomeText || `Conecte este dispositivo com seguran?a a ${networkName}.`}</p></div><div className={`terms-row ${fieldError === 'terms' ? 'terms-error' : ''}`}><label className="check"><input type="checkbox" checked={accepted || preview} readOnly={preview} onChange={(event) => onAcceptedChange?.(event.target.checked)} /> Li e aceito os <button className="terms-inline-link" type="button" onClick={(event) => { event.preventDefault(); onOpenTerms?.() }}>Termos de Uso</button>.</label></div><button className="primary portal-primary" type="button" onClick={onSubmit} disabled={!preview && !accepted}><ShieldCheck /> Continuar</button></div>
+function FlowIndicator({ accepted, methodReady }: { accepted: boolean; methodReady: boolean }) {
+  return <div className="public-flow-steps" aria-label="Etapas de acesso">{flowSteps.map((step, index) => {
+    const active = index === 0 || (index === 1 && accepted) || (index === 2 && methodReady)
+    return <div key={step.label} className={active ? 'active' : ''}><span>{step.icon}</span><small>{step.label}</small></div>
+  })}</div>
+}
+
+function WelcomeStep({ settings, institutionName, networkName, accepted, fieldError, onAcceptedChange, onOpenTerms, onSubmit, preview }: { settings: PublicExperienceSettings | PortalAppearance; institutionName: string; networkName: string; accepted: boolean; fieldError?: string; onAcceptedChange?: (value: boolean) => void; onOpenTerms?: () => void; onSubmit?: () => void; preview: boolean }) {
+  const termsText = normalizeTermsText(settings.termsText)
+  return <div className="portal-step welcome-step"><div className="portal-heading public-welcome-heading"><span className="public-method-pill">{text.secureAccess}</span><h1 id="portal-title">{text.welcomeTitle}</h1><p>{settings.welcomeText || text.welcomeFallback}</p></div><div className="welcome-summary" aria-label="Dados da rede"><div><span>{text.institution}</span><strong>{institutionName}</strong></div><div><span>{text.network}</span><strong>{networkName}</strong></div></div><div className="public-terms-box"><div className="public-terms-title"><ShieldCheck /><span>{text.termsTitle}</span></div><div className="public-terms-preview">{termsText}</div><div className={`terms-row ${fieldError === 'terms' ? 'terms-error' : ''}`}><label className="check"><input type="checkbox" checked={accepted || preview} readOnly={preview} onChange={(event) => onAcceptedChange?.(event.target.checked)} /> <span>{text.termsAccept}<button className="terms-inline-link" type="button" onClick={(event) => { event.preventDefault(); onOpenTerms?.() }}>{text.termsTitle}</button>{text.privacySuffix}</span></label></div></div><button className="primary portal-primary" type="button" onClick={onSubmit} disabled={!preview && !accepted}><ShieldCheck /> {text.continue}</button></div>
 }
 
 function MethodStep(props: PublicPortalExperienceProps & { preview: boolean }) {
+  const initialMethod = props.preview && props.previewState !== 'initial' ? props.method : null
+  const [activeMethod, setActiveMethod] = useState<Method | null>(initialMethod)
+
+  useEffect(() => {
+    if (props.preview && props.previewState !== 'initial') setActiveMethod(props.method)
+  }, [props.method, props.preview, props.previewState])
+
+  const openMethod = (item: Method) => {
+    props.onSelectMethod?.(item)
+    setActiveMethod(item)
+  }
+  const backToChoices = () => {
+    props.onSelectMethod?.(props.method)
+    setActiveMethod(null)
+  }
+
+  if (!activeMethod) {
+    return <div className="portal-step method-step"><div className="portal-heading compact public-method-heading"><span className="public-method-pill">{text.choosePrompt}</span><h1 id="portal-title">{text.chooseTitle}</h1><p>{text.chooseDescription}</p></div><div className="method-tabs method-cards public-method-list" role="list" aria-label="Metodo de acesso">{(['voucher', 'cpf', 'email'] as Method[]).map((item) => <button key={item} onClick={() => openMethod(item)} type="button"><span className="public-method-icon"><MethodIcon method={item} /></span><span>{methodCopy[item].title}</span><small>{methodCopy[item].description}</small><ArrowRight className="public-method-arrow" /></button>)}</div>{props.message ? <p className={`feedback ${props.messageTone || 'info'}`} role="status" aria-live="polite">{props.message}</p> : null}</div>
+  }
+
+  return <MethodFormScreen {...props} method={activeMethod} onBack={backToChoices} />
+}
+
+function MethodFormScreen(props: PublicPortalExperienceProps & { preview: boolean; method: Method; onBack: () => void }) {
   const isBusy = Boolean(props.isBusy)
   const method = props.method
-  return <div className="portal-step method-step"><div className="portal-heading compact"><h1 id="portal-title">Como deseja acessar?</h1><p>Escolha uma op??o para liberar este dispositivo na rede.</p></div><div className="method-tabs" role="tablist" aria-label="M?todo de acesso">{(['voucher', 'cpf', 'email'] as Method[]).map((item) => <button key={item} className={method === item ? 'active' : ''} onClick={() => props.onSelectMethod?.(item)} type="button"><MethodIcon method={item} /><span>{methodLabel(item)}</span></button>)}</div><div className="form-stack"><MethodFields {...props} method={method} /><button className="primary portal-primary" type="button" disabled={!props.preview && (isBusy || !props.identifier || (method === 'email' && (!props.codeRequested || !props.emailCode)))} onClick={props.onSubmit}><ShieldCheck /> {isBusy ? 'Liberando acesso...' : 'Liberar acesso'}</button></div>{props.message ? <p className={`feedback ${props.messageTone || 'info'}`} role="status">{props.message}</p> : null}</div>
+  const canSubmit = method === 'email' ? Boolean(props.codeRequested && props.emailCode?.length === 6) : Boolean(props.identifier)
+  const title = methodCopy[method].title
+  const showEmailCode = method === 'email' && (props.codeRequested || props.previewState === 'code-sent')
+
+  return <div className="portal-step method-detail-step"><button className="public-back-button" type="button" onClick={props.onBack} disabled={isBusy}><ArrowLeft /> {text.back}</button><div className="portal-heading compact public-method-heading"><span className="public-method-pill">{title}</span><h1 id="portal-title">{method === 'email' && showEmailCode ? text.emailSentTitle : title}</h1><p>{methodCopy[method].description}</p></div><div className="form-stack public-form-card" data-method={method}>{method === 'email' && showEmailCode ? <EmailCodeStep {...props} /> : <MethodFields {...props} />}{method !== 'email' ? <button className="primary portal-primary" type="button" disabled={!props.preview && (isBusy || !canSubmit)} onClick={props.onSubmit}><ShieldCheck /> {isBusy ? 'Liberando acesso...' : 'Liberar acesso'}</button> : null}{method === 'email' && !showEmailCode ? <button className="primary portal-primary" type="button" onClick={props.onRequestEmailCode} disabled={props.emailSending || Boolean(props.emailCooldown) || props.isBusy || !props.identifier}>{props.emailSending ? 'Enviando c\u00f3digo...' : props.emailCooldown ? `Reenviar c\u00f3digo em ${formatCountdown(props.emailCooldown)}` : 'Enviar c\u00f3digo'}</button> : null}</div>{props.message ? <p className={`feedback ${props.messageTone || 'info'}`} role="status" aria-live="polite">{props.message}</p> : null}</div>
 }
 
-function MethodFields(props: PublicPortalExperienceProps & { preview: boolean }) {
-  if (props.method === 'cpf') return <><label className="field-label" htmlFor="visitor-name"><span>Nome completo</span><input id="visitor-name" value={props.name || ''} onChange={(event) => props.onNameChange?.(event.target.value)} autoComplete="name" placeholder="Seu nome completo" readOnly={props.preview} /></label><label className="field-label" htmlFor="visitor-phone"><span>Telefone opcional</span><input id="visitor-phone" value={props.phone || ''} onChange={(event) => props.onPhoneChange?.(event.target.value)} inputMode="tel" autoComplete="tel" placeholder="(00) 00000-0000" readOnly={props.preview} /></label><IdentifierField {...props} label="CPF" placeholder="000.000.000-00" help="Digite apenas os n?meros; a m?scara ser? aplicada automaticamente." inputMode="numeric" /></>
-  if (props.method === 'email') return <><IdentifierField {...props} label="E-mail" placeholder="seu.email@exemplo.gov.br" help="Use um e-mail ao qual voc? tenha acesso agora." inputMode="email" autoComplete="email" /><div className="email-code-panel email-code-flow"><button type="button" onClick={props.onRequestEmailCode} disabled={props.emailSending || Boolean(props.emailCooldown) || props.isBusy}>{props.emailSending ? 'Enviando c?digo...' : props.emailCooldown ? `Reenviar c?digo em ${formatCountdown(props.emailCooldown)}` : props.codeRequested ? 'Reenviar c?digo' : 'Enviar c?digo'}</button>{props.codeRequested || props.previewState === 'code-sent' ? <div className="email-sent-card"><CheckCircle2 /><div><strong>Solicita??o processada</strong><p>Se o endere?o puder receber mensagens, enviaremos um c?digo em instantes.</p><small>{props.emailRemaining ? `Expira em ${formatCountdown(props.emailRemaining)}.` : 'Verifique tamb?m sua pasta de spam.'}</small></div></div> : null}<label className="field-label compact code-field" htmlFor="email-code"><span>C?digo recebido</span><input ref={props.codeInputRef} id="email-code" className={props.fieldError === 'code' ? 'code-input input-error highlight' : props.emailCode ? 'code-input highlight' : 'code-input'} placeholder="000000" value={props.emailCode || ''} onChange={(event) => props.onEmailCodeChange?.(event.target.value)} inputMode="numeric" autoComplete="one-time-code" readOnly={props.preview} /><div className="otp-slots" aria-hidden="true">{Array.from({ length: 6 }).map((_, index) => <span key={index} className={props.emailCode?.[index] ? 'filled' : ''}>{props.emailCode?.[index] ?? ''}</span>)}</div></label></div></>
-  return <IdentifierField {...props} label="Voucher" placeholder="Digite seu voucher" help="Informe o c?digo fornecido pela administra??o." inputMode="text" />
+function MethodFields(props: PublicPortalExperienceProps & { preview: boolean; method: Method }) {
+  if (props.method === 'cpf') return <><label className="field-label" htmlFor="visitor-name"><span>Nome completo</span><input id="visitor-name" value={props.name || ''} onChange={(event) => props.onNameChange?.(event.target.value)} autoComplete="off" placeholder="Digite seu nome completo" readOnly={props.preview} /></label><IdentifierField {...props} label="CPF" placeholder="000.000.000-00" help="Digite apenas os n\u00fameros; a m\u00e1scara ser\u00e1 aplicada automaticamente." inputMode="numeric" autoComplete="off" /><label className="field-label" htmlFor="visitor-phone"><span>Telefone opcional</span><input id="visitor-phone" value={props.phone || ''} onChange={(event) => props.onPhoneChange?.(event.target.value)} inputMode="tel" autoComplete="off" placeholder="(00) 00000-0000" readOnly={props.preview} /></label></>
+  if (props.method === 'email') return <IdentifierField {...props} label="E-mail" placeholder="seu.email@exemplo.gov.br" help="Use um e-mail ao qual voc\u00ea tenha acesso agora." inputMode="email" autoComplete="email" />
+  return <VoucherField {...props} />
 }
 
-function IdentifierField(props: PublicPortalExperienceProps & { label: string; placeholder: string; help: string; inputMode: 'text' | 'numeric' | 'email'; autoComplete?: string; preview: boolean }) {
-  return <label className="field-label" htmlFor="portal-identifier"><span>{props.label}</span><input id="portal-identifier" className={props.fieldError === 'identifier' ? 'input-error' : ''} value={props.preview ? previewValue(props.method, props.previewState) : props.identifier} onChange={(event) => props.onIdentifierChange?.(event.target.value)} inputMode={props.inputMode} autoComplete={props.autoComplete || 'off'} placeholder={props.placeholder} readOnly={props.preview} /><small className="field-help">{props.help}</small></label>
+function EmailCodeStep(props: PublicPortalExperienceProps & { preview: boolean }) {
+  return <div className="email-code-screen"><div className="email-sent-card" aria-live="polite"><CheckCircle2 /><div><strong>{text.emailSentTitle}</strong><p>{text.emailSentBody}</p><small>{props.emailRemaining ? `Expira em ${formatCountdown(props.emailRemaining)}.` : text.emailSpam}</small></div></div><label className="field-label compact code-field" htmlFor="email-code"><span>{text.emailCode}</span><input ref={props.codeInputRef} id="email-code" className={props.fieldError === 'code' ? 'code-input input-error highlight' : props.emailCode ? 'code-input highlight' : 'code-input'} placeholder="000000" value={props.emailCode || ''} onChange={(event) => props.onEmailCodeChange?.(event.target.value)} inputMode="numeric" autoComplete="one-time-code" maxLength={6} readOnly={props.preview} autoFocus /><div className="otp-slots" aria-hidden="true">{Array.from({ length: 6 }).map((_, index) => <span key={index} className={props.emailCode?.[index] ? 'filled' : ''}>{props.emailCode?.[index] ?? ''}</span>)}</div><small className="field-help">{text.emailCodeHelp}</small></label><button type="button" className="soft-button" onClick={props.onRequestEmailCode} disabled={props.emailSending || Boolean(props.emailCooldown) || props.isBusy}>{props.emailSending ? 'Enviando c\u00f3digo...' : props.emailCooldown ? `Reenviar c\u00f3digo em ${formatCountdown(props.emailCooldown)}` : 'Reenviar c\u00f3digo'}</button></div>
+}
+
+function VoucherField(props: PublicPortalExperienceProps & { preview: boolean; method: Method }) {
+  const value = props.preview ? previewValue('voucher', props.previewState) : props.identifier
+  const chars = voucherChars(value)
+  const maxSlots = Math.max(8, Math.min(16, chars.length || 8))
+  return <label className="field-label voucher-code-field" htmlFor="portal-voucher"><span>Voucher</span><div className={`voucher-entry ${props.fieldError === 'identifier' ? 'input-error' : ''}`}><input id="portal-voucher" value={value} onChange={(event) => props.onIdentifierChange?.(event.target.value)} inputMode="text" autoComplete="off" aria-label="Voucher" maxLength={39} readOnly={props.preview} autoFocus /><div className="voucher-slots" aria-hidden="true">{Array.from({ length: maxSlots }).map((_, index) => <span key={index} className={chars[index] ? 'filled' : ''}>{chars[index] ?? ''}</span>)}</div></div><small className="field-help">Informe o código fornecido pela administração.</small></label>
+}
+function IdentifierField(props: PublicPortalExperienceProps & { label: string; placeholder: string; help: string; inputMode: 'text' | 'numeric' | 'email'; autoComplete?: string; preview: boolean; method: Method }) {
+  return <label className="field-label" htmlFor="portal-identifier"><span>{props.label}</span><input id="portal-identifier" className={props.fieldError === 'identifier' ? 'input-error' : ''} value={props.preview ? previewValue(props.method, props.previewState) : props.identifier} onChange={(event) => props.onIdentifierChange?.(event.target.value)} inputMode={props.inputMode} autoComplete={props.autoComplete || 'off'} placeholder={props.placeholder} maxLength={props.method === 'voucher' ? 39 : undefined} readOnly={props.preview} /><small className="field-help">{props.help}</small></label>
 }
 
 function previewValue(method: Method, state?: PreviewState) {
   if (method === 'cpf') return '000.000.000-00'
-  if (method === 'email') return state === 'code-sent' ? 'ro***@exemplo.com' : 'visitante@example.com'
+  if (method === 'email') return state === 'code-sent' ? 'visitante@example.com' : 'visitante@example.com'
   return 'RF-ABCD-1234'
 }
 
@@ -139,31 +267,31 @@ function MethodIcon({ method }: { method: Method }) {
 }
 
 function AuthorizationStep({ stage, message, messageTone }: { stage: Stage; message?: string; messageTone?: 'info' | 'success' | 'error' }) {
-  return <div className="portal-step authorizing-step"><div className="portal-heading compact"><h1 id="portal-title">Preparando seu acesso</h1><p>{message || 'Aguarde enquanto confirmamos a autoriza??o na rede.'}</p></div><StageList stage={stage} />{message ? <p className={`feedback ${messageTone || 'info'}`} role="status">{message}</p> : null}</div>
+  return <div className="portal-step authorizing-step"><div className="portal-heading compact"><h1 id="portal-title">{text.authorizingTitle}</h1><p>{message || text.authorizingFallback}</p></div><StageList stage={stage} />{message ? <p className={`feedback ${messageTone || 'info'}`} role="status" aria-live="polite">{message}</p> : null}</div>
 }
 
 function MaintenanceContent({ title, message, imageUrl, startsAt, endsAt }: { title: string; message: string; imageUrl?: string; startsAt?: string | null; endsAt?: string | null }) {
-  return <div className="portal-step maintenance-step">{imageUrl ? <img className="maintenance-hero-image" src={imageUrl} alt="" /> : <Clock className="hero-icon" />}<span className="portal-eyebrow">Status do portal</span><h1 id="portal-title">{title}</h1><p>{message}</p>{startsAt ? <small>In?cio: {formatClock(startsAt)}</small> : null}{endsAt ? <small>Previs?o de retorno: {formatClock(endsAt)}</small> : null}<button className="soft-button" type="button" onClick={() => window.location.reload()}>Tentar novamente</button></div>
+  return <div className="portal-step maintenance-step">{imageUrl ? <img className="maintenance-hero-image" src={imageUrl} alt="" /> : <Clock className="hero-icon" />}<span className="portal-eyebrow">{text.status}</span><h1 id="portal-title">{title}</h1><p>{message}</p>{startsAt ? <small>{text.starts}: {formatClock(startsAt)}</small> : null}{endsAt ? <small>{text.returns}: {formatClock(endsAt)}</small> : null}<button className="soft-button" type="button" onClick={() => window.location.reload()}>{text.tryAgain}</button></div>
 }
 
 function NoticeList({ notices }: { notices: Notice[] }) {
   if (!notices.length) return null
-  return <div className="notices">{notices.map((notice) => <article key={notice.id} className={`notice ${notice.type.toLowerCase()}`}><Bell /><div><strong>{notice.title}</strong><p>{notice.message}</p>{notice.startsAt ? <small>In?cio: {formatClock(notice.startsAt)}</small> : null}</div></article>)}</div>
+  return <div className="notices">{notices.map((notice) => <article key={notice.id} className={`notice ${notice.type.toLowerCase()}`}><Bell /><div><strong>{notice.title}</strong><p>{notice.message}</p>{notice.startsAt ? <small>{text.starts}: {formatClock(notice.startsAt)}</small> : null}</div></article>)}</div>
 }
 
-function TermsModal({ text, onClose, onAccept }: { text?: string; onClose: () => void; onAccept: () => void }) {
-  return <div className="terms-backdrop" role="presentation" onMouseDown={onClose}><section className="terms-modal" role="dialog" aria-modal="true" aria-labelledby="terms-title" onMouseDown={(event) => event.stopPropagation()}><div className="terms-modal-head"><div><span>Termos da rede</span><h2 id="terms-title">Termos de uso</h2></div><button type="button" aria-label="Fechar termos" onClick={onClose}><X /></button></div><div className="terms-scroll"><p>{text || 'Ao continuar, voc? declara ci?ncia e aceite das regras de uso da rede de visitantes.'}</p></div><div className="terms-actions"><button className="terms-secondary" type="button" onClick={onClose}>Fechar</button><button className="primary terms-close" type="button" onClick={onAccept}>Li e aceito os termos</button></div></section></div>
+function TermsModal({ text: termsText, onClose, onAccept }: { text?: string; onClose: () => void; onAccept: () => void }) {
+  return <div className="terms-backdrop" role="presentation" onMouseDown={onClose}><section className="terms-modal" role="dialog" aria-modal="true" aria-labelledby="terms-title" onMouseDown={(event) => event.stopPropagation()}><div className="terms-modal-head"><div><span>Termos da rede</span><h2 id="terms-title">{text.termsAndPrivacy}</h2></div><button type="button" aria-label="Fechar termos" onClick={onClose}><X /></button></div><div className="terms-scroll"><p>{normalizeTermsText(termsText)}</p></div><div className="terms-actions"><button className="terms-secondary" type="button" onClick={onClose}>Fechar</button><button className="primary terms-close" type="button" onClick={onAccept}>Li e aceito os termos</button></div></section></div>
 }
 
 function StageList({ stage }: { stage: Stage }) {
-  const steps: Array<[Stage, string]> = [['validating', 'Credencial validada'], ['authorizing', 'Autorizando na rede'], ['confirming', 'Confirmando authorized=true'], ['checking', 'Verificando acesso'], ['released', 'Conex?o liberada']]
+  const steps: Array<[Stage, string]> = [['validating', 'Dados validados'], ['authorizing', 'Solicitando autorização'], ['confirming', 'Confirmando acesso'], ['checking', 'Verificando conexão'], ['released', 'Conexão liberada']]
   const index = steps.findIndex(([id]) => id === stage)
   if (stage === 'idle' || stage === 'error') return null
   return <ol className="stages">{steps.map(([id, label], stepIndex) => <li key={id} className={stepIndex <= index ? 'done' : ''}><CheckCircle2 /> {label}</li>)}</ol>
 }
 
 function SuccessContent({ session, method, networkName, redirectUrl, successMessage }: { session?: SessionStatus | null; method: Method; networkName: string; redirectUrl?: string; successMessage?: string }) {
-  return <div className="portal-step success-step"><CheckCircle2 className="hero-icon" /><h1 id="portal-title">Acesso autorizado</h1><p className="muted">{successMessage || 'Tudo certo. Você já pode navegar na Internet.'}</p>{session ? <SessionPanel session={session} method={method} networkName={networkName} /> : null}<a className="primary link" href={redirectUrl || 'https://www.gstatic.com/generate_204'}>Continuar para Internet</a></div>
+  return <div className="portal-step success-step"><CheckCircle2 className="hero-icon" /><h1 id="portal-title">{text.accessReleased}</h1><p className="muted">{successMessage || text.successFallback}</p>{session ? <SessionPanel session={session} method={method} networkName={networkName} /> : null}<a className="primary link" href={redirectUrl || 'https://www.gstatic.com/generate_204'} rel="noopener noreferrer">{text.internet}</a></div>
 }
 
 function SessionPanel({ session, method, networkName }: { session: SessionStatus; method: Method; networkName: string }) {
@@ -173,5 +301,5 @@ function SessionPanel({ session, method, networkName }: { session: SessionStatus
     const handle = window.setInterval(() => setRemaining((value) => Math.max(0, value - 1)), 1000)
     return () => window.clearInterval(handle)
   }, [session.remainingSeconds])
-  return <div className="session-box success-session-box"><div><span>Rede</span><strong>{session.ssid || networkName}</strong></div><div><span>M?todo usado</span><strong>{methodLabel(method)}</strong></div><div><span>Autorizada em</span><strong>{formatClock(session.authorizedAt)}</strong></div><div><span>Tempo restante</span><strong>{formatCountdown(remaining)}</strong></div>{remaining <= 600 && remaining > 0 ? <p className="warning-line"><AlertTriangle /> Seu acesso termina em {Math.ceil(remaining / 60)} minutos.</p> : null}{session.warningMessage ? <p className="warning-line"><AlertTriangle /> {session.warningMessage}</p> : null}</div>
+  return <div className="session-box success-session-box"><div><span>{text.network}</span><strong>{session.ssid || networkName}</strong></div><div><span>{text.usedMethod}</span><strong>{methodLabel(method)}</strong></div><div><span>{text.authorizedAt}</span><strong>{formatClock(session.authorizedAt)}</strong></div><div><span>{text.remaining}</span><strong>{formatCountdown(remaining)}</strong></div>{remaining <= 600 && remaining > 0 ? <p className="warning-line"><AlertTriangle /> Seu acesso termina em {Math.ceil(remaining / 60)} minutos.</p> : null}{session.warningMessage ? <p className="warning-line"><AlertTriangle /> {session.warningMessage}</p> : null}</div>
 }

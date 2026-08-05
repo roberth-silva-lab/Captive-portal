@@ -13,7 +13,7 @@ export const portalParams = () => {
   }
 }
 
-export const formatClock = (iso?: string | null) => iso ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(iso)) : 'sem previsao'
+export const formatClock = (iso?: string | null) => iso ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(iso)) : 'sem previsão'
 export const formatMinutes = (seconds: number) => `${Math.round(seconds / 60)} min`
 export const datetimeLocal = (iso?: string | null) => {
   if (!iso) return ''
@@ -69,6 +69,20 @@ export const formatPhone = (value: string) => {
   return digits.replace(/(\d{2})(\d)/, '($1) $2').replace(/(\d{5})(\d)/, '$1-$2')
 }
 export const isCpfComplete = (value: string) => onlyDigits(value).length === 11
+
+export const isValidCpf = (value: string) => {
+  const digits = onlyDigits(value)
+  if (digits.length !== 11 || /^(\d)\1{10}$/.test(digits)) return false
+  const calc = (factor: number) => {
+    const total = digits
+      .slice(0, factor - 1)
+      .split('')
+      .reduce((sum, digit, index) => sum + Number(digit) * (factor - index), 0)
+    const rest = (total * 10) % 11
+    return rest === 10 ? 0 : rest
+  }
+  return calc(10) === Number(digits[9]) && calc(11) === Number(digits[10])
+}
 export const portalInstitutionName = (value?: string) => {
   const name = value?.trim()
   if (!name || name.toLowerCase() === 'gabinete itinerante') return 'Receita Federal'
