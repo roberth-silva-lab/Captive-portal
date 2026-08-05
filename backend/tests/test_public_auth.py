@@ -42,3 +42,40 @@ async def test_voucher_authorization_with_mocked_unifi(client, monkeypatch):
     assert session.site == "site-esdras"
     assert session.unifi_client_id == "client-1"
     db.close()
+
+
+
+def test_cpf_auth_rejects_invalid_cpf_before_unifi(client):
+    response = client.post(
+        "/api/auth/cpf",
+        json={
+            "clientMac": "AA:BB:CC:DD:EE:FF",
+            "name": "Visitante Teste",
+            "cpf": "111.111.111-11",
+            "termsAccepted": True,
+        },
+    )
+    assert response.status_code == 422
+    assert "111.111.111-11" not in response.text
+
+
+def test_request_email_code_invalidates_previous_codes(client, monkeypatch):
+    from app.core.database import SessionLocal
+    from app.models import EmailLoginCode
+
+    sent: list[str] = []
+    monkeypatch.setattr("app.api.public.send_email", lambda to_email, subject, text, html_body=None: sent.append(to_email))
+
+    payload = {"clientMac": "AA:BB:CC:DD:EE:FF", "email": "visitante@example.com", "termsAccepted": True}
+    first = client.post("/api/auth/email/request-code", json=payload)
+    second = client.post("/api/auth/email/request-code", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert sent == ["visitante@example.com", "visitante@example.com"]
+
+    db = SessionLocal()
+    rows = db.query(EmailLoginCode).all()
+    db.close()
+    assert len(rows) == 2
+    assert sum(row.consumed_at is None for row in rows) == 1

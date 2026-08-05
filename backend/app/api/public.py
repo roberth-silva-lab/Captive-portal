@@ -279,7 +279,11 @@ def request_email_code(payload: EmailCodeRequest, request: Request, db: Session 
     code = str(int(random_token_urlsafe(4).encode().hex(), 16))[-6:].zfill(6)
     ttl_minutes = get_settings().email_code_ttl_minutes
     expires_at = utcnow() + timedelta(minutes=ttl_minutes)
-    db.add(EmailLoginCode(email_hash=secret_hash(payload.email.lower()), client_mac=payload.clientMac, code_hash=secret_hash(code), expires_at=expires_at))
+    email_hash = secret_hash(payload.email.lower())
+    previous_codes = db.scalars(select(EmailLoginCode).where(EmailLoginCode.email_hash == email_hash, EmailLoginCode.client_mac == payload.clientMac, EmailLoginCode.consumed_at.is_(None))).all()
+    for previous in previous_codes:
+        previous.consumed_at = utcnow()
+    db.add(EmailLoginCode(email_hash=email_hash, client_mac=payload.clientMac, code_hash=secret_hash(code), expires_at=expires_at))
     db.commit()
     text_body, html_body = wifi_code_email(code, ttl_minutes)
     send_email(payload.email, "Seu codigo de confirmacao", text_body, html_body)

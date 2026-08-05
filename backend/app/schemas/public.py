@@ -13,6 +13,21 @@ def normalize_mac(value: str) -> str:
     return ":".join(raw[i : i + 2] for i in range(0, 12, 2)).lower()
 
 
+def normalize_cpf(value: str) -> str:
+    digits = re.sub(r"\D", "", value or "")
+    if len(digits) != 11 or len(set(digits)) == 1:
+        raise ValueError("CPF invalido.")
+
+    def check_digit(factor: int) -> int:
+        total = sum(int(digit) * (factor - index) for index, digit in enumerate(digits[: factor - 1]))
+        rest = (total * 10) % 11
+        return 0 if rest == 10 else rest
+
+    if check_digit(10) != int(digits[9]) or check_digit(11) != int(digits[10]):
+        raise ValueError("CPF invalido.")
+    return digits
+
+
 class PortalContext(BaseModel):
     clientMac: str = Field(validation_alias=AliasChoices("clientMac", "mac"))
     apMac: str | None = Field(default=None, validation_alias=AliasChoices("apMac", "ap"))
@@ -65,9 +80,32 @@ class VoucherAuthRequest(PortalContext):
 
 
 class CpfAuthRequest(PortalContext):
-    name: str = Field(default="Visitante", min_length=2, max_length=160)
+    name: str = Field(min_length=2, max_length=160)
     cpf: str = Field(min_length=11, max_length=14)
     phone: str | None = Field(default=None, max_length=20)
+
+    @field_validator("name")
+    @classmethod
+    def explicit_name(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if len(cleaned) < 2:
+            raise ValueError("Nome obrigatorio.")
+        return cleaned
+
+    @field_validator("cpf")
+    @classmethod
+    def valid_cpf(cls, value: str) -> str:
+        return normalize_cpf(value)
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        digits = re.sub(r"\D", "", value)
+        if len(digits) not in {10, 11}:
+            raise ValueError("Telefone invalido.")
+        return digits
 
 
 class EmailCodeRequest(PortalContext):
@@ -76,7 +114,14 @@ class EmailCodeRequest(PortalContext):
 
 class EmailCodeVerify(PortalContext):
     email: EmailStr
-    code: str = Field(min_length=4, max_length=8)
+    code: str = Field(min_length=6, max_length=6)
+
+    @field_validator("code")
+    @classmethod
+    def six_digits(cls, value: str) -> str:
+        if not re.fullmatch(r"\d{6}", value):
+            raise ValueError("Codigo invalido.")
+        return value
 
 
 class NotificationResponse(BaseModel):
