@@ -19,8 +19,9 @@ describe('portal public security guards', () => {
     expect(isValidCpf('123.456.789-00')).toBe(false)
   })
 
-  it('does not keep known corrupted Portuguese strings in source files', () => {
-    const forbidden = ['op??o', 'c?digo', 'administra??o', 'n?meros', 'm?scara', 'ser? aplicada', '\uFFFD']
+  it('does not keep known corrupted Portuguese strings or literal unicode escapes in source files', () => {
+    const unicodeEscapePrefix = `${String.fromCharCode(92)}u00`
+    const forbidden = ['op??o', 'c?digo', 'administra??o', 'n?meros', 'm?scara', 'ser? aplicada', '\uFFFD', unicodeEscapePrefix]
     const files = walk(srcDir).filter((file) => /\.(ts|tsx|css)$/.test(file) && !file.endsWith('portal-security.test.ts'))
     const matches = files.flatMap((file) => {
       const content = readFileSync(file, 'utf8')

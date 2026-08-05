@@ -176,6 +176,7 @@ function Portal() {
   const [emailRemaining, setEmailRemaining] = useState(0)
   const [termsOpen, setTermsOpen] = useState(false)
   const [session, setSession] = useState<SessionStatus | null>(null)
+  const [formInstanceKey, setFormInstanceKey] = useState(0)
 
   useEffect(() => {
     const query = new URLSearchParams({ site: params.site })
@@ -222,13 +223,20 @@ function Portal() {
   const isBusy = ['validating', 'authorizing', 'confirming', 'checking'].includes(stage)
   const basePayload = { ...params, termsAccepted: accepted }
 
-  const selectMethod = (selected: Method) => {
-    setMethod(selected)
+  const clearPublicPii = () => {
     setIdentifier('')
+    setName('')
     setEmailCode('')
     setPhone('')
     setCodeRequested(false)
     setEmailExpiresAt(null)
+    setEmailRemaining(0)
+    setFormInstanceKey((value) => value + 1)
+  }
+
+  const selectMethod = (selected: Method) => {
+    setMethod(selected)
+    clearPublicPii()
     setFieldError('')
     setMessage('')
     setStage('idle')
@@ -334,6 +342,7 @@ function Portal() {
       setMessage(method === 'email' ? 'E-mail confirmado. Liberando seu acesso...' : 'Acesso liberado com sucesso.')
       setMessageTone('success')
       setStage('released')
+      clearPublicPii()
     } catch (error) {
       setStage('error')
       setMessage(error instanceof Error ? error.message : 'Não foi possível liberar o acesso.')
@@ -375,6 +384,7 @@ function Portal() {
     session={session}
     redirectUrl={params.redirectUrl}
     termsOpen={termsOpen}
+    formInstanceKey={formInstanceKey}
     codeInputRef={codeInputRef}
     onSelectMethod={selectMethod}
     onIdentifierChange={updateIdentifier}

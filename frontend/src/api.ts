@@ -7,7 +7,7 @@ const fieldErrorMessage = (detail: unknown) => {
       if (!item || typeof item !== 'object') return ''
       const record = item as { loc?: unknown[]; msg?: string }
       const field = Array.isArray(record.loc) ? String(record.loc[record.loc.length - 1] ?? '') : ''
-      const label = field === 'confirmPassword' || field === 'confirm_password' ? 'confirma\u00e7\u00e3o de senha' : field === 'acceptedPolicy' || field === 'accepted_policy' ? 'pol\u00edtica administrativa' : field || 'campo'
+      const label = field === 'confirmPassword' || field === 'confirm_password' ? 'confirmação de senha' : field === 'acceptedPolicy' || field === 'accepted_policy' ? 'política administrativa' : field || 'campo'
       return record.msg ? `${label}: ${record.msg}` : ''
     })
     .filter(Boolean)
@@ -16,18 +16,18 @@ const fieldErrorMessage = (detail: unknown) => {
 
 const fallbackMessage = (status: number, detail?: unknown) => {
   const safeDetail = typeof detail === 'string' ? detail : undefined
-  if (status === 400) return safeDetail || 'Solicita\u00e7\u00e3o inv\u00e1lida.'
-  if (status === 401) return 'E-mail ou senha inv\u00e1lidos.'
-  if (status === 403) return 'Voc\u00ea n\u00e3o possui permiss\u00e3o para esta a\u00e7\u00e3o.'
-  if (status === 404) return safeDetail || 'Registro n\u00e3o encontrado.'
-  if (status === 409) return safeDetail || 'J\u00e1 existe um registro com estes dados.'
+  if (status === 400) return safeDetail || 'Solicitação inválida.'
+  if (status === 401) return 'E-mail ou senha inválidos.'
+  if (status === 403) return 'Você não possui permissão para esta ação.'
+  if (status === 404) return safeDetail || 'Registro não encontrado.'
+  if (status === 409) return safeDetail || 'Já existe um registro com estes dados.'
   if (status === 410) return safeDetail || 'Este convite expirou ou foi revogado.'
   if (status === 413) return safeDetail || 'Arquivo maior que o limite permitido.'
-  if (status === 415) return safeDetail || 'Formato de arquivo n\u00e3o permitido.'
+  if (status === 415) return safeDetail || 'Formato de arquivo não permitido.'
   if (status === 422) return fieldErrorMessage(detail) || safeDetail || 'Verifique os campos informados.'
   if (status === 429) return 'Muitas tentativas. Aguarde alguns minutos.'
-  if (status === 500 || status === 503) return 'O servi\u00e7o est\u00e1 temporariamente indispon\u00edvel.'
-  return safeDetail || 'N\u00e3o foi poss\u00edvel concluir a solicita\u00e7\u00e3o.'
+  if (status === 500 || status === 503) return 'O serviço está temporariamente indisponível.'
+  return safeDetail || 'Não foi possível concluir a solicitação.'
 }
 
 export class ApiError extends Error {
