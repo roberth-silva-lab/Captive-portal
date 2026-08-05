@@ -20,8 +20,24 @@ import {
 import type { AdminMe, AdminSection, AllowedSite, MaintenanceAdmin } from '../types'
 import { formatClock, secondsAgo } from '../utils'
 
+const safeSidebarStorageGet = () => {
+  try {
+    return window.localStorage.getItem('admin_sidebar_collapsed') === 'true'
+  } catch {
+    return false
+  }
+}
+
+const safeSidebarStorageSet = (value: boolean) => {
+  try {
+    window.localStorage.setItem('admin_sidebar_collapsed', String(value))
+  } catch {
+    // Mantém a navegação funcional em webviews que bloqueiam storage.
+  }
+}
+
 export function AdminSidebar({ active, open, onClose, onSelect }: { active: AdminSection; open: boolean; onClose: () => void; onSelect: (section: AdminSection) => void }) {
-  const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem('admin_sidebar_collapsed') === 'true')
+  const [collapsed, setCollapsed] = useState(safeSidebarStorageGet)
   const groups: Array<{ label: string; items: Array<{ id: AdminSection; label: string; icon: ReactNode }> }> = [
     { label: 'Visão geral', items: [{ id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard /> }] },
     { label: 'Acesso', items: [{ id: 'sessions', label: 'Sessões', icon: <MonitorCheck /> }, { id: 'visitors', label: 'Usuários/Visitantes', icon: <UsersRound /> }, { id: 'vouchers', label: 'Vouchers', icon: <Ticket /> }] },
@@ -32,7 +48,7 @@ export function AdminSidebar({ active, open, onClose, onSelect }: { active: Admi
   const toggleCollapsed = () => {
     const next = !collapsed
     setCollapsed(next)
-    window.localStorage.setItem('admin_sidebar_collapsed', String(next))
+    safeSidebarStorageSet(next)
   }
   return (
     <>

@@ -1,4 +1,4 @@
-import { StrictMode, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { Component, StrictMode, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   Activity,
@@ -23,7 +23,7 @@ import {
   Wifi,
   X,
 } from 'lucide-react'
-import { api } from './api'
+import { ApiError, api } from './api'
 import { AcceptInvite } from './components/accept-invite'
 import { AdminHeader, AdminSidebar, MaintenanceSummary, PageHeader } from './components/admin-layout'
 import { NoticeAdminPanel } from './components/notices-panel'
@@ -80,6 +80,24 @@ import {
   validEmail,
 } from './utils'
 import './styles.css'
+
+const asArray = <T,>(value: T[] | null | undefined): T[] => Array.isArray(value) ? value : []
+
+const safeStorageGet = (key: string, fallback = '') => {
+  try {
+    return window.localStorage.getItem(key) || fallback
+  } catch {
+    return fallback
+  }
+}
+
+const safeStorageSet = (key: string, value: string) => {
+  try {
+    window.localStorage.setItem(key, value)
+  } catch {
+    // Navegadores em modo restrito podem bloquear storage; o painel deve continuar abrindo.
+  }
+}
 
 const uploadImageAsset = async (file: File, assetType: string) => {
   const formData = new FormData()
@@ -334,7 +352,7 @@ function Admin() {
   const [siteAppearance, setSiteAppearance] = useState<PortalSiteAppearance | null>(null)
   const [sites, setSites] = useState<SiteNode[]>([])
   const [allowedSites, setAllowedSites] = useState<AllowedSite[]>([])
-  const [selectedSiteId, setSelectedSiteId] = useState(() => window.localStorage.getItem('admin_selected_site_id') || 'ALL')
+  const [selectedSiteId, setSelectedSiteId] = useState(() => safeStorageGet('admin_selected_site_id', 'ALL'))
   const [notices, setNotices] = useState<AdminNotice[]>([])
   const [audit, setAudit] = useState<AuditEntry[]>([])
   const [vouchers, setVouchers] = useState<Voucher[]>([])
@@ -344,6 +362,7 @@ function Admin() {
   const [admins, setAdmins] = useState<AdminUserRow[]>([])
   const [adminInvitations, setAdminInvitations] = useState<AdminInviteResponse[]>([])
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all')
+  const [loadStatus, setLoadStatus] = useState<'loading' | 'ready' | 'unauthenticated' | 'forbidden' | 'error'>('loading')
   const [error, setError] = useState('')
   const [activeSection, setActiveSection] = useState<AdminSection>(() => window.location.pathname.startsWith('/admin/sites/') ? 'site-detail' : 'dashboard')
   const [detailSiteId, setDetailSiteId] = useState(() => decodeURIComponent(window.location.pathname.startsWith('/admin/sites/') ? window.location.pathname.split('/').pop() || '' : ''))
@@ -360,7 +379,7 @@ function Admin() {
   const loadInFlight = useRef(false)
   const scopedPath = (path: string) => selectedSiteId === 'ALL' ? path : `${path}?siteId=${encodeURIComponent(selectedSiteId)}`
   const handleSiteChange = (siteId: string) => {
-    window.localStorage.setItem('admin_selected_site_id', siteId)
+    safeStorageSet('admin_selected_site_id', siteId)
     setSelectedSiteId(siteId)
   }
 
@@ -396,28 +415,45 @@ function Admin() {
         api<AdminUserRow[]>('/api/admin/admins').catch(() => []),
         api<AdminInviteResponse[]>('/api/admin/admins/invitations').catch(() => []),
       ])
-    setAdmin(me)
-    setAllowedSites(allowedSiteRows)
-    const canUseAll = me.canSelectAllSites || me.siteIds.length > 1
-    if (allowedSiteRows.length && selectedSiteId !== 'ALL' && !allowedSiteRows.some((site) => site.siteId === selectedSiteId)) handleSiteChange(canUseAll ? 'ALL' : allowedSiteRows[0].siteId)
-    if (!canUseAll && selectedSiteId === 'ALL' && allowedSiteRows.length === 1) handleSiteChange(allowedSiteRows[0].siteId)
+    const normalizedMe = { ...me, siteIds: asArray(me.siteIds) }
+    const safeAllowedSites = asArray(allowedSiteRows)
+    setAdmin(normalizedMe)
+    setAllowedSites(safeAllowedSites)
+    const canUseAll = normalizedMe.canSelectAllSites || normalizedMe.siteIds.length > 1
+    if (safeAllowedSites.length && selectedSiteId !== 'ALL' && !safeAllowedSites.some((site) => site.siteId === selectedSiteId)) handleSiteChange(canUseAll ? 'ALL' : safeAllowedSites[0].siteId)
+    if (!canUseAll && selectedSiteId === 'ALL' && safeAllowedSites.length === 1) handleSiteChange(safeAllowedSites[0].siteId)
     setDashboard(dash)
     setMaintenance(maint)
     setAppearance(appearanceRow)
     setSiteAppearance(selectedAppearanceRow)
-    setSites(siteRows)
-    setNotices(noticeRows)
-    setAudit(auditRows)
-    setVouchers(voucherRows)
-    setVisitors(visitorRows)
-    setAccessPoints(accessPointRows)
-    setSessions(sessionRows)
-      setAdmins(adminRows)
-      setAdminInvitations(invitationRows)
+    setSites(asArray(siteRows))
+    setNotices(asArray(noticeRows))
+    setAudit(asArray(auditRows))
+    setVouchers(asArray(voucherRows))
+    setVisitors(asArray(visitorRows))
+    setAccessPoints(asArray(accessPointRows))
+    setSessions(asArray(sessionRows))
+      setAdmins(asArray(adminRows))
+      setAdminInvitations(asArray(invitationRows))
+      setLoadStatus('ready')
       setLastUpdatedAt(new Date())
       setRefreshError('')
+      setError('')
     } catch (err) {
-      setRefreshError(err instanceof Error ? err.message : 'Não foi possível atualizar agora.')
+      const message = err instanceof Error ? err.message : 'Não foi possível atualizar agora.'
+      setRefreshError(message)
+      if (err instanceof ApiError && err.status === 401) {
+        setAdmin(null)
+        setDashboard(null)
+        setLoadStatus('unauthenticated')
+        setError('Sua sessão expirou. Entre novamente para continuar.')
+        return
+      }
+      if (err instanceof ApiError && err.status === 403) {
+        setLoadStatus('forbidden')
+        return
+      }
+      if (!dashboard) setLoadStatus('error')
       throw err
     } finally {
       setRefreshing(false)
@@ -425,7 +461,7 @@ function Admin() {
     }
   }
 
-  useEffect(() => { void load().catch(() => setDashboard(null)) }, [])
+  useEffect(() => { void load().catch(() => undefined) }, [])
   useEffect(() => { if (admin) void load().catch(() => undefined) }, [selectedSiteId])
   useEffect(() => {
     if (!dashboard) return undefined
@@ -461,6 +497,8 @@ function Admin() {
     setAdmin(null)
     setAllowedSites([])
     setSiteAppearance(null)
+    setLoadStatus('unauthenticated')
+    setError('')
   }
 
   const runSessionOperation = async (sessionId: string, operation: 'end' | 'require-reauthentication' | 'extend' | 'reauthorize' | 'block', body: Record<string, unknown>) => {
@@ -535,7 +573,19 @@ function Admin() {
     }
   }
 
-  if (!dashboard) {
+  if (loadStatus === 'loading') {
+    return <AdminLoading />
+  }
+
+  if (loadStatus === 'forbidden') {
+    return <AdminAccessState title="Acesso negado" message="Seu usuário autenticado não possui permissão para abrir este painel." onRetry={() => void load().catch(() => undefined)} />
+  }
+
+  if (loadStatus === 'error' && !dashboard) {
+    return <AdminAccessState title="Painel indisponível" message={refreshError || 'Não foi possível carregar os dados administrativos agora.'} onRetry={() => { setLoadStatus('loading'); void load().catch(() => undefined) }} />
+  }
+
+  if (!dashboard || loadStatus === 'unauthenticated') {
     return <AdminLogin email={email} password={password} error={error} onEmail={setEmail} onPassword={setPassword} onLogin={login} />
   }
 
@@ -544,21 +594,63 @@ function Admin() {
       <AdminSidebar active={activeSection} open={menuOpen} onClose={() => setMenuOpen(false)} onSelect={(section) => { setActiveSection(section); setMenuOpen(false); if (section !== 'site-detail') window.history.pushState(null, '', section === 'sites' ? '/admin/sites' : '/admin') }} />
       <section className="admin-main" aria-label="Conteudo administrativo">
         <AdminHeader admin={admin} maintenance={maintenance} refreshing={refreshing} lastUpdatedAt={lastUpdatedAt} refreshError={refreshError} allowedSites={allowedSites} selectedSiteId={selectedSiteId} onSiteChange={handleSiteChange} onLogout={logout} onMenu={() => setMenuOpen(true)} />
-        {activeSection === 'dashboard' ? <DashboardHome dashboard={dashboard} maintenance={maintenance} sites={sites} notices={notices} vouchers={vouchers} audit={audit} onSelect={(section, filter) => { setActiveSection(section); if (filter) setSessionFilter(filter) }} /> : null}
-        {activeSection === 'sessions' ? <SessionsPage sessions={sessions} sites={sites} filter={sessionFilter} busy={sessionActionBusy} feedback={sessionActionMessage} onFilter={setSessionFilter} onRunOperation={runSessionOperation} /> : null}
-        {activeSection === 'visitors' ? <VisitorsPanel visitors={visitors} busy={sessionActionBusy} onEndSession={endAdminSession} /> : null}
-        {activeSection === 'vouchers' ? <VoucherPanel vouchers={vouchers} allowedSites={allowedSites} selectedSiteId={selectedSiteId} onChanged={load} /> : null}
-        {activeSection === 'notices' ? <NoticeAdminPanel notices={notices} allowedSites={allowedSites} selectedSiteId={selectedSiteId} canSelectAllSites={Boolean(admin?.canSelectAllSites)} onChanged={load} /> : null}
-        {activeSection === 'maintenance' && maintenance ? <MaintenanceAdminPanel maintenance={maintenance} saving={savingMaintenance} feedback={maintenanceMessage} onChange={setMaintenance} onSave={saveMaintenance} /> : null}
-        {activeSection === 'sites' ? <SitesPanel sites={sites} onOpen={openSiteDetail} /> : null}
-        {activeSection === 'site-detail' ? <SiteDetailPanel siteId={detailSiteId || selectedSiteId} sites={sites} visitors={visitors} sessions={sessions} accessPoints={accessPoints} vouchers={vouchers} notices={notices} maintenance={maintenance} onBack={leaveSiteDetail} onOpenSection={(section) => setActiveSection(section)} /> : null}
-        {activeSection === 'access-points' ? <AccessPointsPanel accessPoints={accessPoints} /> : null}
-        {activeSection === 'admins' ? <AdminsPanel admin={admin} admins={admins} invitations={adminInvitations} allowedSites={allowedSites} onChanged={load} /> : null}
-        {activeSection === 'audit' ? <AuditPanel audit={audit} /> : null}
-        {activeSection === 'settings' && appearance ? <SettingsPanel admin={admin} maintenance={maintenance} appearance={selectedSiteId !== 'ALL' && siteAppearance ? siteAppearance : appearance} allowedSites={allowedSites} selectedSiteId={selectedSiteId} siteAppearance={siteAppearance} notices={notices} saving={appearanceSaving} feedback={appearanceMessage} onChange={(value) => selectedSiteId !== 'ALL' && siteAppearance ? setSiteAppearance({ ...siteAppearance, ...value }) : setAppearance(value)} onSave={saveAppearance} onResetSite={resetSiteAppearance} /> : null}
+        <AdminSectionErrorBoundary section={activeSection}>
+          {activeSection === 'dashboard' ? <DashboardHome dashboard={dashboard} maintenance={maintenance} sites={sites} notices={notices} vouchers={vouchers} audit={audit} onSelect={(section, filter) => { setActiveSection(section); if (filter) setSessionFilter(filter) }} /> : null}
+          {activeSection === 'sessions' ? <SessionsPage sessions={sessions} sites={sites} filter={sessionFilter} busy={sessionActionBusy} feedback={sessionActionMessage} onFilter={setSessionFilter} onRunOperation={runSessionOperation} /> : null}
+          {activeSection === 'visitors' ? <VisitorsPanel visitors={visitors} busy={sessionActionBusy} onEndSession={endAdminSession} /> : null}
+          {activeSection === 'vouchers' ? <VoucherPanel vouchers={vouchers} allowedSites={allowedSites} selectedSiteId={selectedSiteId} onChanged={load} /> : null}
+          {activeSection === 'notices' ? <NoticeAdminPanel notices={notices} allowedSites={allowedSites} selectedSiteId={selectedSiteId} canSelectAllSites={Boolean(admin?.canSelectAllSites)} onChanged={load} /> : null}
+          {activeSection === 'maintenance' ? maintenance ? <MaintenanceAdminPanel maintenance={maintenance} saving={savingMaintenance} feedback={maintenanceMessage} onChange={setMaintenance} onSave={saveMaintenance} /> : <AdminRouteState title="Manutenção" message="Configuração de manutenção ainda não carregada." /> : null}
+          {activeSection === 'sites' ? <SitesPanel sites={sites} onOpen={openSiteDetail} /> : null}
+          {activeSection === 'site-detail' ? <SiteDetailPanel siteId={detailSiteId || selectedSiteId} sites={sites} visitors={visitors} sessions={sessions} accessPoints={accessPoints} vouchers={vouchers} notices={notices} maintenance={maintenance} onBack={leaveSiteDetail} onOpenSection={(section) => setActiveSection(section)} /> : null}
+          {activeSection === 'access-points' ? <AccessPointsPanel accessPoints={accessPoints} /> : null}
+          {activeSection === 'admins' ? <AdminsPanel admin={admin} admins={admins} invitations={adminInvitations} allowedSites={allowedSites} onChanged={load} /> : null}
+          {activeSection === 'audit' ? <AuditPanel audit={audit} /> : null}
+          {activeSection === 'settings' ? appearance ? <SettingsPanel admin={admin} maintenance={maintenance} appearance={selectedSiteId !== 'ALL' && siteAppearance ? siteAppearance : appearance} allowedSites={allowedSites} selectedSiteId={selectedSiteId} siteAppearance={siteAppearance} notices={notices} saving={appearanceSaving} feedback={appearanceMessage} onChange={(value) => selectedSiteId !== 'ALL' && siteAppearance ? setSiteAppearance({ ...siteAppearance, ...value }) : setAppearance(value)} onSave={saveAppearance} onResetSite={resetSiteAppearance} /> : <AdminRouteState title="Configurações" message="Configurações do portal ainda não carregadas." /> : null}
+        </AdminSectionErrorBoundary>
       </section>
     </main>
   )
+}
+
+function AdminLoading() {
+  return <main className="portal-shell admin-login-shell"><section className="panel admin-card admin-loading-card" aria-live="polite"><div className="brand"><ShieldCheck aria-hidden="true" /><span>Portal administrativo</span></div><h1>Carregando painel</h1><p className="muted">Validando sessão e carregando os dados operacionais.</p></section></main>
+}
+
+function AdminAccessState({ title, message, onRetry }: { title: string; message: string; onRetry: () => void }) {
+  return <main className="portal-shell admin-login-shell"><section className="panel admin-card admin-recovery-card" role="alert"><div className="brand"><AlertTriangle aria-hidden="true" /><span>Portal administrativo</span></div><h1>{title}</h1><p className="muted">{message}</p><button className="primary" type="button" onClick={onRetry}>Tentar novamente</button></section></main>
+}
+
+function AdminRouteState({ title, message }: { title: string; message: string }) {
+  return <div className="admin-content"><Panel title={title} icon={<AlertTriangle />}><EmptyState message={message} /></Panel></div>
+}
+
+type AdminSectionErrorBoundaryProps = { section: AdminSection; children: ReactNode }
+type AdminSectionErrorBoundaryState = { error: Error | null }
+
+class AdminSectionErrorBoundary extends Component<AdminSectionErrorBoundaryProps, AdminSectionErrorBoundaryState> {
+  state: AdminSectionErrorBoundaryState = { error: null }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('Admin section render failed', {
+      section: this.props.section,
+      errorName: error.name,
+      componentStack: info.componentStack?.slice(0, 1200),
+    })
+  }
+
+  componentDidUpdate(previousProps: AdminSectionErrorBoundaryProps) {
+    if (previousProps.section !== this.props.section && this.state.error) this.setState({ error: null })
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children
+    return <div className="admin-content"><Panel title="Não foi possível abrir esta área" icon={<AlertTriangle />}><div className="admin-error-boundary" role="alert"><p>Uma falha inesperada impediu a renderização desta tela. O menu lateral continua disponível para acessar outras áreas.</p><button className="primary" type="button" onClick={() => window.location.reload()}>Recarregar página</button></div></Panel></div>
+  }
 }
 
 function AdminLogin({ email, password, error, onEmail, onPassword, onLogin }: { email: string; password: string; error: string; onEmail: (value: string) => void; onPassword: (value: string) => void; onLogin: () => void }) {
@@ -803,7 +895,7 @@ function AdminsPanel({ admin, admins, invitations, allowedSites, onChanged }: { 
     }
   }
 
-  return <div className="admin-content"><PageHeader title="Administradores" description="Convide novos administradores com RBAC e escopo de unidades." action={canManage ? <button className="soft-button" type="button" onClick={() => { setForm({ name: '', email: '', role: 'ADMIN', siteIds: allowedSites.map((site) => site.siteId) }); setOpen(true); setMessage(''); setInvite(null) }}><UserCog /> Novo administrador</button> : null} />{message ? <p className={message.includes('sucesso') || message.includes('criado') ? 'success admin-inline-feedback' : 'error admin-inline-feedback'} role="status">{message}</p> : null}<Panel title="Administradores" icon={<UserCog />}>{admins.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Nome</th><th>Email</th><th>Role</th><th>Sites</th><th>Status</th><th>MFA</th><th>Último login</th><th>Criado em</th><th>Ações</th></tr></thead><tbody>{admins.map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.email}</td><td>{row.role}</td><td>{adminSiteLabel(row)}</td><td>{row.status}</td><td>{row.mfa === 'not_configured' ? 'Não configurado' : row.mfa}</td><td>{formatClock(row.lastLogin)}</td><td>{formatClock(row.createdAt)}</td><td>{canManage && row.role !== 'SUPERADMIN' ? <button className="table-action" type="button" onClick={() => openAccessEditor(row)}>Sites</button> : <span className="muted-cell">Global</span>}</td></tr>)}</tbody></table></div> : <EmptyState message={canManage ? 'Nenhum administrador adicional encontrado.' : 'Somente SUPERADMIN pode listar administradores.'} />}</Panel><Panel title="Convites administrativos" icon={<UserCog />}><div className="invite-summary-row"><span>Pendentes: {invitationSummary.pending}</span><span>Expirados: {invitationSummary.expired}</span><span>Revogados: {invitationSummary.revoked}</span></div>{invitations.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Nome</th><th>Email</th><th>Role</th><th>Sites</th><th>Status</th><th>Expira em</th><th>A??es</th></tr></thead><tbody>{invitations.map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.email}</td><td>{row.role}</td><td>{row.siteIds.length ? row.siteIds.map(siteLabel).join(', ') : 'Acesso global'}</td><td>{row.deliveryStatus}</td><td>{formatClock(row.expiresAt)}</td><td><div className="table-actions-inline"><button className="table-action" type="button" onClick={() => void renewInvite(row.id)} disabled={busy || row.deliveryStatus === 'ACCEPTED'}>Novo link</button>{row.inviteUrl ? <button className="table-action" type="button" onClick={() => void copyToClipboard(row.inviteUrl || '')}>Copiar</button> : null}<button className="table-action danger-text" type="button" onClick={() => void revokeInvite(row.id)} disabled={busy || row.deliveryStatus === 'ACCEPTED' || row.deliveryStatus === 'REVOKED'}>Revogar</button></div></td></tr>)}</tbody></table></div> : <EmptyState message="Nenhum convite administrativo encontrado." />}</Panel>{open ? <div className="modal-backdrop centered" role="presentation"><section className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="admin-invite-title"><div className="modal-head"><div><span>RBAC</span><h2 id="admin-invite-title">Convidar administrador</h2></div><button type="button" aria-label="Fechar" onClick={() => setOpen(false)}><X /></button></div><div className="panel-form"><label htmlFor="invite-name">Nome<input id="invite-name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} autoComplete="name" /></label><label htmlFor="invite-email">Email<input id="invite-email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} autoComplete="email" /></label><label htmlFor="invite-role">Perfil<select id="invite-role" value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="ADMIN">ADMIN</option><option value="VIEWER">VIEWER</option><option value="SUPERADMIN">SUPERADMIN</option></select></label>{form.role !== 'SUPERADMIN' ? <fieldset className="site-checks"><legend>Unidades permitidas</legend>{allowedSites.length ? allowedSites.map((site) => <label className="checkline" key={site.siteId}><input type="checkbox" checked={form.siteIds.includes(site.siteId)} onChange={() => toggleInviteSite(site.siteId)} /> {site.name}</label>) : <p className="panel-note">Nenhuma unidade permitida foi retornada pela API.</p>}</fieldset> : <p className="panel-note">SUPERADMIN possui acesso global ao painel.</p>}<button className="primary admin-save" type="button" onClick={() => void createInvite()} disabled={busy || (form.role !== 'SUPERADMIN' && !form.siteIds.length)}>{busy ? 'Enviando...' : 'Enviar convite'}</button>{invite ? <div className="invite-result"><span>{invite.deliveryStatus === 'sent' ? 'Email enviado' : 'Envio de email pendente'}</span><strong>{invite.email}</strong><p>Expira em {formatClock(invite.expiresAt)}</p>{invite.siteIds.length ? <p>Sites: {invite.siteIds.map(siteLabel).join(', ')}</p> : <p>Sites: acesso global</p>}{invite.inviteUrl ? <div className="copy-field"><input aria-label="Link do convite" readOnly value={invite.inviteUrl} /><button className="icon-table-action" type="button" aria-label="Copiar link do convite" onClick={() => void copyToClipboard(invite.inviteUrl || '')}><Copy /></button></div> : null}</div> : null}</div></section></div> : null}{editingAccess ? <div className="modal-backdrop centered" role="presentation"><section className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="site-access-title"><div className="modal-head"><div><span>Permissões</span><h2 id="site-access-title">Sites de {editingAccess.name}</h2></div><button type="button" aria-label="Fechar" onClick={() => setEditingAccess(null)}><X /></button></div><div className="panel-form"><fieldset className="site-checks"><legend>Unidades permitidas</legend>{allowedSites.map((site) => <label className="checkline" key={site.siteId}><input type="checkbox" checked={accessSiteIds.includes(site.siteId)} onChange={() => toggleAccessSite(site.siteId)} /> {site.name}</label>)}</fieldset><button className="primary admin-save" type="button" onClick={() => void saveAccess()} disabled={busy || !accessSiteIds.length}>{busy ? 'Salvando...' : 'Salvar permissões'}</button></div></section></div> : null}</div>
+  return <div className="admin-content"><PageHeader title="Administradores" description="Convide novos administradores com RBAC e escopo de unidades." action={canManage ? <button className="soft-button" type="button" onClick={() => { setForm({ name: '', email: '', role: 'ADMIN', siteIds: allowedSites.map((site) => site.siteId) }); setOpen(true); setMessage(''); setInvite(null) }}><UserCog /> Novo administrador</button> : null} />{message ? <p className={message.includes('sucesso') || message.includes('criado') ? 'success admin-inline-feedback' : 'error admin-inline-feedback'} role="status">{message}</p> : null}<Panel title="Administradores" icon={<UserCog />}>{admins.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Nome</th><th>Email</th><th>Role</th><th>Sites</th><th>Status</th><th>MFA</th><th>Último login</th><th>Criado em</th><th>Ações</th></tr></thead><tbody>{admins.map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.email}</td><td>{row.role}</td><td>{adminSiteLabel(row)}</td><td>{row.status}</td><td>{row.mfa === 'not_configured' ? 'Não configurado' : row.mfa}</td><td>{formatClock(row.lastLogin)}</td><td>{formatClock(row.createdAt)}</td><td>{canManage && row.role !== 'SUPERADMIN' ? <button className="table-action" type="button" onClick={() => openAccessEditor(row)}>Sites</button> : <span className="muted-cell">Global</span>}</td></tr>)}</tbody></table></div> : <EmptyState message={canManage ? 'Nenhum administrador adicional encontrado.' : 'Somente SUPERADMIN pode listar administradores.'} />}</Panel><Panel title="Convites administrativos" icon={<UserCog />}><div className="invite-summary-row"><span>Pendentes: {invitationSummary.pending}</span><span>Expirados: {invitationSummary.expired}</span><span>Revogados: {invitationSummary.revoked}</span></div>{invitations.length ? <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Nome</th><th>Email</th><th>Role</th><th>Sites</th><th>Status</th><th>Expira em</th><th>A??es</th></tr></thead><tbody>{invitations.map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.email}</td><td>{row.role}</td><td>{asArray(row.siteIds).length ? asArray(row.siteIds).map(siteLabel).join(', ') : 'Acesso global'}</td><td>{row.deliveryStatus}</td><td>{formatClock(row.expiresAt)}</td><td><div className="table-actions-inline"><button className="table-action" type="button" onClick={() => void renewInvite(row.id)} disabled={busy || row.deliveryStatus === 'ACCEPTED'}>Novo link</button>{row.inviteUrl ? <button className="table-action" type="button" onClick={() => void copyToClipboard(row.inviteUrl || '')}>Copiar</button> : null}<button className="table-action danger-text" type="button" onClick={() => void revokeInvite(row.id)} disabled={busy || row.deliveryStatus === 'ACCEPTED' || row.deliveryStatus === 'REVOKED'}>Revogar</button></div></td></tr>)}</tbody></table></div> : <EmptyState message="Nenhum convite administrativo encontrado." />}</Panel>{open ? <div className="modal-backdrop centered" role="presentation"><section className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="admin-invite-title"><div className="modal-head"><div><span>RBAC</span><h2 id="admin-invite-title">Convidar administrador</h2></div><button type="button" aria-label="Fechar" onClick={() => setOpen(false)}><X /></button></div><div className="panel-form"><label htmlFor="invite-name">Nome<input id="invite-name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} autoComplete="name" /></label><label htmlFor="invite-email">Email<input id="invite-email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} autoComplete="email" /></label><label htmlFor="invite-role">Perfil<select id="invite-role" value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}><option value="ADMIN">ADMIN</option><option value="VIEWER">VIEWER</option><option value="SUPERADMIN">SUPERADMIN</option></select></label>{form.role !== 'SUPERADMIN' ? <fieldset className="site-checks"><legend>Unidades permitidas</legend>{allowedSites.length ? allowedSites.map((site) => <label className="checkline" key={site.siteId}><input type="checkbox" checked={form.siteIds.includes(site.siteId)} onChange={() => toggleInviteSite(site.siteId)} /> {site.name}</label>) : <p className="panel-note">Nenhuma unidade permitida foi retornada pela API.</p>}</fieldset> : <p className="panel-note">SUPERADMIN possui acesso global ao painel.</p>}<button className="primary admin-save" type="button" onClick={() => void createInvite()} disabled={busy || (form.role !== 'SUPERADMIN' && !form.siteIds.length)}>{busy ? 'Enviando...' : 'Enviar convite'}</button>{invite ? <div className="invite-result"><span>{invite.deliveryStatus === 'sent' ? 'Email enviado' : 'Envio de email pendente'}</span><strong>{invite.email}</strong><p>Expira em {formatClock(invite.expiresAt)}</p>{asArray(invite.siteIds).length ? <p>Sites: {asArray(invite.siteIds).map(siteLabel).join(', ')}</p> : <p>Sites: acesso global</p>}{invite.inviteUrl ? <div className="copy-field"><input aria-label="Link do convite" readOnly value={invite.inviteUrl} /><button className="icon-table-action" type="button" aria-label="Copiar link do convite" onClick={() => void copyToClipboard(invite.inviteUrl || '')}><Copy /></button></div> : null}</div> : null}</div></section></div> : null}{editingAccess ? <div className="modal-backdrop centered" role="presentation"><section className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="site-access-title"><div className="modal-head"><div><span>Permissões</span><h2 id="site-access-title">Sites de {editingAccess.name}</h2></div><button type="button" aria-label="Fechar" onClick={() => setEditingAccess(null)}><X /></button></div><div className="panel-form"><fieldset className="site-checks"><legend>Unidades permitidas</legend>{allowedSites.map((site) => <label className="checkline" key={site.siteId}><input type="checkbox" checked={accessSiteIds.includes(site.siteId)} onChange={() => toggleAccessSite(site.siteId)} /> {site.name}</label>)}</fieldset><button className="primary admin-save" type="button" onClick={() => void saveAccess()} disabled={busy || !accessSiteIds.length}>{busy ? 'Salvando...' : 'Salvar permissões'}</button></div></section></div> : null}</div>
 }
 function SettingsPanel({ admin, maintenance, appearance, allowedSites, selectedSiteId, siteAppearance, notices, saving, feedback, onChange, onSave, onResetSite }: { admin: AdminMe | null; maintenance: MaintenanceAdmin | null; appearance: PortalAppearance; allowedSites: AllowedSite[]; selectedSiteId: string; siteAppearance: PortalSiteAppearance | null; notices: AdminNotice[]; saving: boolean; feedback: string; onChange: (value: PortalAppearance) => void; onSave: () => void; onResetSite: () => void }) {
   const [device, setDevice] = useState<PreviewDevice>('mobile')
@@ -862,4 +954,7 @@ function MaintenanceAdminPanel({ maintenance, saving, feedback, onChange, onSave
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 
-createRoot(document.getElementById('root')!).render(<StrictMode>{window.location.pathname.startsWith('/admin/accept-invite') ? <AcceptInvite /> : window.location.pathname.startsWith('/admin') ? <Admin /> : <Portal />}</StrictMode>)
+const rootElement = document.getElementById('root')
+if (!rootElement) throw new Error('Elemento raiz da aplicação não encontrado.')
+
+createRoot(rootElement).render(<StrictMode>{window.location.pathname.startsWith('/admin/accept-invite') ? <AcceptInvite /> : window.location.pathname.startsWith('/admin') ? <Admin /> : <Portal />}</StrictMode>)
