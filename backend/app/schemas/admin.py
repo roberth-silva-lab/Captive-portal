@@ -271,7 +271,7 @@ class PortalAppearanceRequest(BaseModel):
     welcomeText: str = Field(default="Conecte-se de forma segura à rede de visitantes.", min_length=1, max_length=300)
     successMessage: str = Field(default="Acesso liberado. Você já pode navegar na Internet.", min_length=1, max_length=300)
     expiredMessage: str = Field(default="Sua sessão expirou. Autentique-se novamente para continuar usando o Wi-Fi.", min_length=1, max_length=300)
-    termsText: str = Field(default="Ao continuar, VocÃª aceita os termos de uso da rede.", min_length=1, max_length=8000)
+    termsText: str = Field(default="Ao continuar, você aceita os termos de uso da rede.", min_length=1, max_length=8000)
     authMethods: list[str] = Field(default_factory=lambda: ["voucher", "cpf", "email"], min_length=1, max_length=3)
 
     @field_validator("authMethods")
