@@ -200,6 +200,7 @@ class SiteNode(BaseModel):
     connectedClients: int = 0
     sessions: int = 0
     allowed: bool = True
+    authMethods: list[str] = Field(default_factory=lambda: ["voucher", "cpf", "email"])
 
 
 class VoucherCreateRequest(BaseModel):

@@ -44,6 +44,7 @@ import type {
   AuthResponse,
   ClientRow,
   Dashboard,
+  DashboardChartsData,
   EmailCodeResponse,
   GuestSessionRow,
   MaintenanceAdmin,
@@ -85,6 +86,8 @@ import {
 import './styles.css'
 
 const asArray = <T,>(value: T[] | null | undefined): T[] => Array.isArray(value) ? value : []
+const EMPTY_DASHBOARD_CHARTS: DashboardChartsData = { connectionsByDay: [], bestDays: [], quietDays: [], authMethods: [], longestSessions: [], periodDays: 30 }
+
 const DEFAULT_PORTAL_SETTINGS: PortalSettings = {
   logoUrl: '/leaoreceita.png',
   primaryColor: '#176b87',
@@ -415,6 +418,7 @@ function Admin() {
   const [password, setPassword] = useState('')
   const [admin, setAdmin] = useState<AdminMe | null>(null)
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
+  const [dashboardCharts, setDashboardCharts] = useState<DashboardChartsData>(EMPTY_DASHBOARD_CHARTS)
   const [maintenance, setMaintenance] = useState<MaintenanceAdmin | null>(null)
   const [appearance, setAppearance] = useState<PortalAppearance | null>(null)
   const [siteAppearance, setSiteAppearance] = useState<PortalSiteAppearance | null>(null)
@@ -472,10 +476,11 @@ function Admin() {
     loadInFlight.current = true
     setRefreshing(true)
     try {
-      const [me, allowedSiteRows, dash, maint, appearanceRow, selectedAppearanceRow, siteRows, noticeRows, auditRows, voucherRows, visitorRows, accessPointRows, sessionRows, adminRows, invitationRows] = await Promise.all([
+      const [me, allowedSiteRows, dash, chartRows, maint, appearanceRow, selectedAppearanceRow, siteRows, noticeRows, auditRows, voucherRows, visitorRows, accessPointRows, sessionRows, adminRows, invitationRows] = await Promise.all([
         api<AdminMe>('/api/admin/me'),
         api<AllowedSite[]>('/api/admin/sites/allowed').catch(() => []),
         api<Dashboard>(scopedPath('/api/admin/dashboard')),
+        api<DashboardChartsData>(scopedPath('/api/admin/dashboard/charts')).catch(() => EMPTY_DASHBOARD_CHARTS),
         api<MaintenanceAdmin>(scopedPath('/api/admin/maintenance')),
         api<PortalAppearance>('/api/admin/portal-appearance'),
         selectedSiteId === 'ALL' ? Promise.resolve(null) : api<PortalSiteAppearance>(`/api/admin/portal-appearance/site/${encodeURIComponent(selectedSiteId)}`).catch(() => null),
@@ -497,6 +502,7 @@ function Admin() {
     if (safeAllowedSites.length && selectedSiteId !== 'ALL' && !safeAllowedSites.some((site) => site.siteId === selectedSiteId)) handleSiteChange(canUseAll ? 'ALL' : safeAllowedSites[0].siteId)
     if (!canUseAll && selectedSiteId === 'ALL' && safeAllowedSites.length === 1) handleSiteChange(safeAllowedSites[0].siteId)
     setDashboard(dash)
+    setDashboardCharts(chartRows || EMPTY_DASHBOARD_CHARTS)
     setMaintenance(maint)
     setAppearance(appearanceRow)
     setSiteAppearance(selectedAppearanceRow)
@@ -579,6 +585,7 @@ function Admin() {
     setAdmin(null)
     setAllowedSites([])
     setSiteAppearance(null)
+    setDashboardCharts(EMPTY_DASHBOARD_CHARTS)
     setLoadStatus('unauthenticated')
     setError('')
   }
@@ -677,7 +684,7 @@ function Admin() {
       <section className="admin-main" aria-label="Conteudo administrativo">
         <AdminHeader admin={admin} maintenance={maintenance} refreshing={refreshing} lastUpdatedAt={lastUpdatedAt} refreshError={refreshError} allowedSites={allowedSites} selectedSiteId={selectedSiteId} onSiteChange={handleSiteChange} onLogout={logout} onMenu={() => setMenuOpen(true)} />
         <AdminSectionErrorBoundary section={activeSection}>
-          {activeSection === 'dashboard' ? <DashboardHome dashboard={dashboard} maintenance={maintenance} sites={sites} notices={notices} vouchers={vouchers} audit={audit} onSelect={(section, filter) => { setActiveSection(section); if (filter) setSessionFilter(filter) }} /> : null}
+          {activeSection === 'dashboard' ? <DashboardHome dashboard={dashboard} charts={dashboardCharts} maintenance={maintenance} sites={sites} notices={notices} vouchers={vouchers} audit={audit} onSelect={(section, filter) => { setActiveSection(section); if (filter) setSessionFilter(filter) }} /> : null}
           {activeSection === 'sessions' ? <SessionsPage sessions={sessions} sites={sites} admin={admin} filter={sessionFilter} busy={sessionActionBusy} feedback={sessionActionMessage} onFilter={setSessionFilter} onRunOperation={runSessionOperation} /> : null}
           {activeSection === 'visitors' ? <VisitorsPanel visitors={visitors} busy={sessionActionBusy} onEndSession={endAdminSession} /> : null}
           {activeSection === 'vouchers' ? <VoucherPanel vouchers={vouchers} allowedSites={allowedSites} selectedSiteId={selectedSiteId} onChanged={load} /> : null}
@@ -853,12 +860,12 @@ function AdminLogin({ email, password, error, onEmail, onPassword, onLogin, onRe
 
 
 
-function DashboardHome({ dashboard, maintenance, sites, notices, vouchers, audit, onSelect }: { dashboard: Dashboard; maintenance: MaintenanceAdmin | null; sites: SiteNode[]; notices: AdminNotice[]; vouchers: Voucher[]; audit: AuditEntry[]; onSelect: (section: AdminSection, filter?: SessionFilter) => void }) {
+function DashboardHome({ dashboard, charts, maintenance, sites, notices, vouchers, audit, onSelect }: { dashboard: Dashboard; charts: DashboardChartsData; maintenance: MaintenanceAdmin | null; sites: SiteNode[]; notices: AdminNotice[]; vouchers: Voucher[]; audit: AuditEntry[]; onSelect: (section: AdminSection, filter?: SessionFilter) => void }) {
   const activeNotices = notices.filter((notice) => notice.enabled)
   return (
     <div className="admin-content">
       <MetricGrid dashboard={dashboard} onSelect={onSelect} />
-      <DashboardCharts dashboard={dashboard} sites={sites} notices={notices} vouchers={vouchers} onSelect={onSelect} />
+      <DashboardCharts dashboard={dashboard} charts={charts} sites={sites} notices={notices} vouchers={vouchers} onSelect={onSelect} />
       <SiteBreakdown sites={sites} notices={notices} vouchers={vouchers} />
       <section className="ops-grid" aria-label="Conteudo operacional">
         <SessionsRecent />
@@ -871,27 +878,45 @@ function DashboardHome({ dashboard, maintenance, sites, notices, vouchers, audit
   )
 }
 
-function DashboardCharts({ dashboard, sites, notices, vouchers, onSelect }: { dashboard: Dashboard; sites: SiteNode[]; notices: AdminNotice[]; vouchers: Voucher[]; onSelect: (section: AdminSection, filter?: SessionFilter) => void }) {
+function methodLabel(method: string) {
+  const normalized = method.toLowerCase()
+  if (normalized === 'voucher') return 'Voucher'
+  if (normalized === 'cpf') return 'CPF'
+  if (normalized === 'email') return 'E-mail'
+  if (normalized === 'provisional') return 'Provisório'
+  return method
+}
+
+function DashboardCharts({ dashboard, charts, sites, notices, vouchers, onSelect }: { dashboard: Dashboard; charts: DashboardChartsData; sites: SiteNode[]; notices: AdminNotice[]; vouchers: Voucher[]; onSelect: (section: AdminSection, filter?: SessionFilter) => void }) {
   const totalClients = sites.reduce((total, site) => total + (site.connectedClients || 0), 0)
   const totalAps = sites.reduce((total, site) => total + (site.aps || 0), 0)
   const totalSessions = Math.max(1, sites.reduce((total, site) => total + (site.sessions || 0), 0), dashboard.onlineUsers, dashboard.sessionsEndedToday)
-  const expiringTotal = dashboard.expiringIn30Minutes + dashboard.expiringIn10Minutes
   const activeNoticeCount = notices.filter((notice) => notice.enabled).length
   const activeVoucherCount = vouchers.filter((voucher) => voucher.enabled && voucher.isActive !== false).length
-  const bars = [
-    { label: 'Online', value: dashboard.onlineUsers, tone: 'ok', section: 'sessions' as const, filter: 'online' as const },
-    { label: 'Expiram', value: expiringTotal, tone: expiringTotal ? 'warning' : 'muted', section: 'sessions' as const, filter: 'expiring-30' as const },
-    { label: 'Encerradas', value: dashboard.sessionsEndedToday, tone: 'neutral', section: 'sessions' as const, filter: 'ended-today' as const },
-    { label: 'Vouchers', value: dashboard.vouchersAvailable, tone: dashboard.vouchersAvailable ? 'ok' : 'warning', section: 'vouchers' as const },
-  ]
-  const maxBar = Math.max(1, ...bars.map((item) => item.value))
+  const daySeries = charts.connectionsByDay.slice(-14)
+  const maxDay = Math.max(1, ...daySeries.map((item) => item.count))
+  const maxMethod = Math.max(1, ...charts.authMethods.map((item) => item.count))
   const onlinePercent = Math.min(100, Math.round((dashboard.onlineUsers / totalSessions) * 100))
   return (
-    <section className="dashboard-visual-grid" aria-label="Gráficos operacionais do portal">
-      <Panel title="Resumo visual" icon={<Gauge />} compact>
-        <div className="dashboard-bars">
-          {bars.map((item) => <button key={item.label} type="button" onClick={() => onSelect(item.section, item.filter)} className="dashboard-bar-row"><span>{item.label}</span><div className="dashboard-bar-track"><i className={item.tone} style={{ width: String(Math.max(6, (item.value / maxBar) * 100)) + '%' }} /></div><strong>{item.value}</strong></button>)}
+    <section className="dashboard-visual-grid expanded" aria-label="Gráficos operacionais do portal">
+      <Panel title={`Conexões por dia · ${charts.periodDays || 30} dias`} icon={<Gauge />} compact>
+        {daySeries.length ? <div className="dashboard-bars daily">
+          {daySeries.map((item) => <div key={item.date} className="dashboard-bar-row"><span>{item.label}</span><div className="dashboard-bar-track"><i className={item.count ? 'ok' : 'muted'} style={{ width: String(item.count ? Math.max(6, (item.count / maxDay) * 100) : 2) + '%' }} /></div><strong>{item.count}</strong></div>)}
+        </div> : <EmptyState message="Ainda não há conexões registradas no período." />}
+      </Panel>
+      <Panel title="Dias de maior e menor movimento" icon={<Activity />} compact>
+        <div className="dashboard-rank-columns">
+          <div><strong>Maiores</strong>{charts.bestDays.length ? charts.bestDays.map((item) => <span key={`best-${item.date}`}>{item.label}<b>{item.count}</b></span>) : <small>Sem dados.</small>}</div>
+          <div><strong>Menores</strong>{charts.quietDays.length ? charts.quietDays.map((item) => <span key={`quiet-${item.date}`}>{item.label}<b>{item.count}</b></span>) : <small>Sem dados.</small>}</div>
         </div>
+      </Panel>
+      <Panel title="Métodos usados" icon={<Ticket />} compact>
+        {charts.authMethods.length ? <div className="dashboard-bars">
+          {charts.authMethods.map((item) => <div key={item.method} className="dashboard-bar-row"><span>{methodLabel(item.method)}</span><div className="dashboard-bar-track"><i className="neutral" style={{ width: String(Math.max(6, (item.count / maxMethod) * 100)) + '%' }} /></div><strong>{item.count}</strong></div>)}
+        </div> : <EmptyState message="Nenhum método usado no período." />}
+      </Panel>
+      <Panel title="Maiores tempos de sessão" icon={<Clock />} compact>
+        {charts.longestSessions.length ? <div className="dashboard-longest-list">{charts.longestSessions.map((item) => <article key={item.sessionId}><div><strong>{item.label}</strong><span>{item.site || 'Site não informado'} · {methodLabel(item.method)}</span></div><b>{formatMinutes(item.durationSeconds)}</b></article>)}</div> : <EmptyState message="Nenhuma sessão com duração calculada." />}
       </Panel>
       <Panel title="Capacidade observada" icon={<Wifi />} compact>
         <div className="dashboard-donut-grid">
@@ -904,14 +929,13 @@ function DashboardCharts({ dashboard, sites, notices, vouchers, onSelect }: { da
       </Panel>
     </section>
   )
-}
-function SiteBreakdown({ sites, notices, vouchers }: { sites: SiteNode[]; notices: AdminNotice[]; vouchers: Voucher[] }) {
+}function SiteBreakdown({ sites, notices, vouchers }: { sites: SiteNode[]; notices: AdminNotice[]; vouchers: Voucher[] }) {
   if (!sites.length) return null
   return <section className="site-breakdown-grid" aria-label="Resumo por site">{sites.map((site) => {
     const siteId = site.siteId || site.name
     const siteNotices = notices.filter((notice) => notice.enabled && (notice.site === siteId || notice.site === site.name || notice.site === 'ALL')).length
     const siteVouchers = vouchers.filter((voucher) => voucher.siteId === siteId || voucher.site === siteId || voucher.siteName === site.name || voucher.site === site.name).length
-    return <article className="site-breakdown-card" key={siteId}><div><strong>{site.name}</strong><span>{site.status}</span></div><dl><div><dt>APs</dt><dd>{site.aps}</dd></div><div><dt>Clientes UniFi</dt><dd>{site.connectedClients}</dd></div><div><dt>Sessões</dt><dd>{site.sessions}</dd></div><div><dt>Vouchers</dt><dd>{siteVouchers}</dd></div><div><dt>Avisos</dt><dd>{siteNotices}</dd></div></dl></article>
+    return <article className="site-breakdown-card" key={siteId}><div><strong>{site.name}</strong><span>{site.status}</span></div><div className="site-method-chips">{(site.authMethods?.length ? site.authMethods : (["voucher", "cpf", "email"] as Method[])).map((method) => <span key={method}>{methodLabel(method)}</span>)}</div><dl><div><dt>APs</dt><dd>{site.aps}</dd></div><div><dt>Clientes UniFi</dt><dd>{site.connectedClients}</dd></div><div><dt>Sessões</dt><dd>{site.sessions}</dd></div><div><dt>Vouchers</dt><dd>{siteVouchers}</dd></div><div><dt>Avisos</dt><dd>{siteNotices}</dd></div></dl></article>
   })}</section>
 }
 function MetricGrid({ dashboard, onSelect }: { dashboard: Dashboard; onSelect: (section: AdminSection, filter?: SessionFilter) => void }) {
@@ -941,7 +965,7 @@ function SitesPanel({ sites, compact = false, onOpen }: { sites: SiteNode[]; com
   return <Panel title={compact ? 'Status dos sites' : 'Topologia dos sites'} icon={<Building2 />} compact={compact}>{sites.length ? <div className="site-topology"><div className="topology-summary" aria-label="Resumo da topologia"><div><span>Sites</span><strong>{sites.length}</strong></div><div><span>APs</span><strong>{totals.aps}</strong></div><div><span>Clientes</span><strong>{totals.clients}</strong></div><div><span>Sessões</span><strong>{totals.sessions}</strong></div></div><div className="site-topology-grid">{sites.map((site) => {
     const status = (site.status || '').toLowerCase()
     const health = status.includes('connect') || status.includes('online') ? 'ok' : site.aps || site.connectedClients || site.sessions ? 'warning' : 'muted'
-    const content = <><div className="site-node-head"><span className={`topology-dot ${health}`} /><div><strong>{site.name}</strong><small>{site.status || 'Status indisponível'}</small></div></div><div className="site-flow" aria-hidden="true"><span>Site</span><i /><span>APs</span><i /><span>Clientes</span><i /><span>Portal</span></div><dl><div><dt>APs</dt><dd>{site.aps}</dd></div><div><dt>Clientes</dt><dd>{site.connectedClients}</dd></div><div><dt>Sessões</dt><dd>{site.sessions}</dd></div></dl></>
+    const content = <><div className="site-node-head"><span className={`topology-dot ${health}`} /><div><strong>{site.name}</strong><small>{site.status || 'Status indisponível'}</small></div></div><div className="site-method-chips" aria-label="Métodos de acesso liberados">{(site.authMethods?.length ? site.authMethods : (["voucher", "cpf", "email"] as Method[])).map((method) => <span key={method}>{methodLabel(method)}</span>)}</div><div className="site-flow" aria-hidden="true"><span>Site</span><i /><span>APs</span><i /><span>Clientes</span><i /><span>Portal</span></div><dl><div><dt>APs</dt><dd>{site.aps}</dd></div><div><dt>Clientes</dt><dd>{site.connectedClients}</dd></div><div><dt>Sessões</dt><dd>{site.sessions}</dd></div></dl></>
     return onOpen && site.siteId ? <button key={site.siteId || site.name} className="site-topology-card clickable" type="button" onClick={() => onOpen(site.siteId || site.name)}>{content}</button> : <article key={site.siteId || site.name} className="site-topology-card">{content}</article>
   })}</div></div> : <EmptyState message="Nenhum site retornado pela API." />}</Panel>
 }
@@ -956,7 +980,7 @@ function SiteDetailPanel({ siteId, sites, visitors, sessions, accessPoints, vouc
   const siteNotices = notices.filter((notice) => notice.site === 'ALL' || notice.site === siteId || notice.site === siteName)
   const authorized = siteSessions.filter((session) => session.status === 'authorized' && session.remainingSeconds > 0).length
   const expiring = siteSessions.filter((session) => session.status === 'authorized' && session.remainingSeconds > 0 && session.remainingSeconds <= 1800).length
-  return <div className="admin-content"><PageHeader title={siteName} description="Resumo operacional da unidade selecionada." action={<button className="soft-button" type="button" onClick={onBack}>Voltar para sites</button>} /><section className="site-detail-grid"><InfoTile title="APs" value={site?.aps ?? siteAps.length} detail="Access Points retornados pela UniFi para este site." icon={<Radio />} /><InfoTile title="Clientes UniFi" value={site?.connectedClients ?? siteVisitors.length} detail="Clientes conectados observados no UniFi." icon={<Wifi />} /><InfoTile title="Sessões autorizadas" value={authorized} detail="Sessões ainda válidas no captive portal." icon={<MonitorCheck />} /><InfoTile title="Expiram em 30 min" value={expiring} detail="Acessos próximos do fim." icon={<Clock />} /></section><section className="site-network-map" aria-label="Topologia da unidade"><div><Building2 /><strong>{siteName}</strong><span>{site?.status || 'Status indisponível'}</span></div><i /><div><Radio /><strong>{site?.aps ?? siteAps.length}</strong><span>Access Points</span></div><i /><div><Wifi /><strong>{site?.connectedClients ?? siteVisitors.length}</strong><span>Clientes UniFi</span></div><i /><div><MonitorCheck /><strong>{authorized}</strong><span>Sessões válidas</span></div></section><section className="site-detail-actions"><button className="soft-button" type="button" onClick={() => onOpenSection('visitors')}>Clientes</button><button className="soft-button" type="button" onClick={() => onOpenSection('sessions')}>Sessões</button><button className="soft-button" type="button" onClick={() => onOpenSection('access-points')}>APs</button><button className="soft-button" type="button" onClick={() => onOpenSection('vouchers')}>Vouchers</button><button className="soft-button" type="button" onClick={() => onOpenSection('notices')}>Avisos</button><button className="soft-button" type="button" onClick={() => onOpenSection('maintenance')}>Manutenção</button></section><section className="ops-grid"><Panel title="Sessões recentes" icon={<MonitorCheck />} compact>{siteSessions.slice(0, 5).length ? <div className="admin-list">{siteSessions.slice(0, 5).map((session) => <article className="admin-list-item" key={session.id}><div><strong>{session.name || session.clientMac}</strong><span>{session.status} · {formatCountdown(session.remainingSeconds)}</span></div><p>{session.ssid || 'SSID não informado'} · {session.method}</p></article>)}</div> : <EmptyState message="Nenhuma sessão recente neste site." />}</Panel><Panel title="Access Points" icon={<Radio />} compact>{siteAps.slice(0, 5).length ? <div className="admin-list">{siteAps.slice(0, 5).map((ap, index) => <article className="admin-list-item" key={textValue(ap, ['id', 'mac']) || index}><div><strong>{textValue(ap, ['name']) || 'AP sem nome'}</strong><span>{textValue(ap, ['status']) || 'Status indisponível'}</span></div><p>{textValue(ap, ['mac']) || textValue(ap, ['ip']) || 'Identificação indisponível'}</p></article>)}</div> : <EmptyState message="Nenhum AP listado neste site." />}</Panel><Panel title="Vouchers" icon={<Ticket />} compact>{siteVouchers.slice(0, 5).length ? <div className="admin-list">{siteVouchers.slice(0, 5).map((voucher) => <article className="admin-list-item" key={voucher.id}><div><strong>{voucher.codeLabel}</strong><span>{voucher.status}</span></div><p>{voucher.durationMinutes} min · {voucher.usedCount} uso(s) · {voucher.expiresAt ? formatClock(voucher.expiresAt) : 'sem expiração'}</p></article>)}</div> : <EmptyState message="Nenhum voucher neste site." />}</Panel><Panel title="Avisos e manutenção" icon={<Megaphone />} compact>{siteNotices.slice(0, 4).length ? <div className="admin-list">{siteNotices.slice(0, 4).map((notice) => <article className="admin-list-item" key={notice.id}><div><strong>{notice.title}</strong><span>{notice.site === 'ALL' ? 'Global' : siteName}</span></div><p>{notice.message}</p></article>)}</div> : <EmptyState message={maintenance?.maintenanceEnabled ? 'Sem aviso ativo; manutenção configurada.' : 'Nenhum aviso ativo neste site.'} />}</Panel></section></div>
+  return <div className="admin-content"><PageHeader title={siteName} description="Resumo operacional da unidade selecionada." action={<button className="soft-button" type="button" onClick={onBack}>Voltar para sites</button>} /><section className="site-detail-grid"><InfoTile title="APs" value={site?.aps ?? siteAps.length} detail="Access Points retornados pela UniFi para este site." icon={<Radio />} /><InfoTile title="Clientes UniFi" value={site?.connectedClients ?? siteVisitors.length} detail="Clientes conectados observados no UniFi." icon={<Wifi />} /><InfoTile title="Sessões autorizadas" value={authorized} detail="Sessões ainda válidas no captive portal." icon={<MonitorCheck />} /><InfoTile title="Expiram em 30 min" value={expiring} detail="Acessos próximos do fim." icon={<Clock />} /><InfoTile title="Métodos públicos" value={(site?.authMethods?.length ? site.authMethods : (["voucher", "cpf", "email"] as Method[])).map(methodLabel).join(', ')} detail="Métodos visíveis e validados para esta unidade." icon={<Ticket />} /></section><section className="site-network-map" aria-label="Topologia da unidade"><div><Building2 /><strong>{siteName}</strong><span>{site?.status || 'Status indisponível'}</span></div><i /><div><Radio /><strong>{site?.aps ?? siteAps.length}</strong><span>Access Points</span></div><i /><div><Wifi /><strong>{site?.connectedClients ?? siteVisitors.length}</strong><span>Clientes UniFi</span></div><i /><div><MonitorCheck /><strong>{authorized}</strong><span>Sessões válidas</span></div></section><section className="site-detail-actions"><button className="soft-button" type="button" onClick={() => onOpenSection('visitors')}>Clientes</button><button className="soft-button" type="button" onClick={() => onOpenSection('sessions')}>Sessões</button><button className="soft-button" type="button" onClick={() => onOpenSection('access-points')}>APs</button><button className="soft-button" type="button" onClick={() => onOpenSection('vouchers')}>Vouchers</button><button className="soft-button" type="button" onClick={() => onOpenSection('notices')}>Avisos</button><button className="soft-button" type="button" onClick={() => onOpenSection('maintenance')}>Manutenção</button></section><section className="ops-grid"><Panel title="Sessões recentes" icon={<MonitorCheck />} compact>{siteSessions.slice(0, 5).length ? <div className="admin-list">{siteSessions.slice(0, 5).map((session) => <article className="admin-list-item" key={session.id}><div><strong>{session.name || session.clientMac}</strong><span>{session.status} · {formatCountdown(session.remainingSeconds)}</span></div><p>{session.ssid || 'SSID não informado'} · {session.method}</p></article>)}</div> : <EmptyState message="Nenhuma sessão recente neste site." />}</Panel><Panel title="Access Points" icon={<Radio />} compact>{siteAps.slice(0, 5).length ? <div className="admin-list">{siteAps.slice(0, 5).map((ap, index) => <article className="admin-list-item" key={textValue(ap, ['id', 'mac']) || index}><div><strong>{textValue(ap, ['name']) || 'AP sem nome'}</strong><span>{textValue(ap, ['status']) || 'Status indisponível'}</span></div><p>{textValue(ap, ['mac']) || textValue(ap, ['ip']) || 'Identificação indisponível'}</p></article>)}</div> : <EmptyState message="Nenhum AP listado neste site." />}</Panel><Panel title="Vouchers" icon={<Ticket />} compact>{siteVouchers.slice(0, 5).length ? <div className="admin-list">{siteVouchers.slice(0, 5).map((voucher) => <article className="admin-list-item" key={voucher.id}><div><strong>{voucher.codeLabel}</strong><span>{voucher.status}</span></div><p>{voucher.durationMinutes} min · {voucher.usedCount} uso(s) · {voucher.expiresAt ? formatClock(voucher.expiresAt) : 'sem expiração'}</p></article>)}</div> : <EmptyState message="Nenhum voucher neste site." />}</Panel><Panel title="Avisos e manutenção" icon={<Megaphone />} compact>{siteNotices.slice(0, 4).length ? <div className="admin-list">{siteNotices.slice(0, 4).map((notice) => <article className="admin-list-item" key={notice.id}><div><strong>{notice.title}</strong><span>{notice.site === 'ALL' ? 'Global' : siteName}</span></div><p>{notice.message}</p></article>)}</div> : <EmptyState message={maintenance?.maintenanceEnabled ? 'Sem aviso ativo; manutenção configurada.' : 'Nenhum aviso ativo neste site.'} />}</Panel></section></div>
 }function AuditPanel({ audit, compact = false }: { audit: AuditEntry[]; compact?: boolean }) {
   return <Panel title="Últimas ações administrativas" icon={<History />} compact={compact}>{audit.length ? <div className="admin-list">{audit.slice(0, compact ? 5 : 30).map((entry) => <article key={entry.id} className="admin-list-item"><div><strong>{humanAudit(entry.event)}</strong><span>{formatClock(entry.createdAt)}</span></div><p>{entry.siteLabel && entry.siteLabel !== 'global' ? `Unidade: ${entry.siteLabel}` : 'Escopo: global'} · Referência: {entry.targetId || 'global'}</p></article>)}</div> : <EmptyState message="Nenhuma ação administrativa recente." />}</Panel>
 }

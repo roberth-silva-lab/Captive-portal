@@ -654,11 +654,11 @@ async def sites(siteId: str | None = None, db: Session = Depends(get_db), admin:
             clients = await unifi_client.list_clients(site_id)
             aps = await unifi_client.list_access_points(site_id)
             status = "connected" if devices or clients else "empty"
-            rows.append(SiteNode(name=_unifi_site_name(site), siteId=site_id, status=status, aps=len(aps), connectedClients=len(clients), sessions=_site_session_count(db, site_id)))
+            rows.append(SiteNode(name=_unifi_site_name(site), siteId=site_id, status=status, aps=len(aps), connectedClients=len(clients), sessions=_site_session_count(db, site_id), authMethods=_portal_site_appearance(db, site_id, _unifi_site_name(site)).authMethods))
         return rows
     except UniFiError:
         configured = db.scalars(select(SiteProfile).order_by(SiteProfile.name)).all()
-        return [SiteNode(name=site.name, siteId=site.slug or site.name, status="unavailable", aps=0, connectedClients=0, sessions=0) for site in configured if selected_sites is None or site.slug in selected_sites or site.name in selected_sites]
+        return [SiteNode(name=site.name, siteId=site.slug or site.name, status="unavailable", aps=0, connectedClients=0, sessions=0, authMethods=_portal_site_appearance(db, site.slug or site.name, site.name).authMethods) for site in configured if selected_sites is None or site.slug in selected_sites or site.name in selected_sites]
 
 
 @router.post("/vouchers", response_model=VoucherBatchCreateResponse, dependencies=[Depends(require_csrf)])
@@ -1301,5 +1301,40 @@ def revoke_access_block(block_id: str, payload: SessionActionRequest, db: Sessio
     return _operation_response(block_id, result)
 
 @router.get("/dashboard/charts")
-def dashboard_charts(_admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
-    return {"authMethods": [], "visitorsByDay": [], "connectionsByHour": [], "bandwidthByHour": [], "bandwidthAvailable": False}
+def dashboard_charts(siteId: str | None = None, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    now = utcnow()
+    start = now - timedelta(days=29)
+    selected_sites = visible_site_filter(db, admin, siteId)
+    site_filter = [GuestSession.site.in_(selected_sites)] if selected_sites is not None else []
+    rows = db.scalars(select(GuestSession).where(GuestSession.created_at >= start, *site_filter).order_by(GuestSession.created_at.asc())).all()
+
+    days = {}
+    for index in range(30):
+        day = (start + timedelta(days=index)).date().isoformat()
+        days[day] = 0
+    method_counts = {"VOUCHER": 0, "CPF": 0, "EMAIL": 0, "PROVISIONAL": 0}
+    longest = []
+    for session in rows:
+        day_key = session.created_at.date().isoformat()
+        if day_key in days:
+            days[day_key] += 1
+        method = getattr(session.authorization_method, "value", str(session.authorization_method)).upper()
+        method_counts[method] = method_counts.get(method, 0) + 1
+        duration = session.duration_seconds or 0
+        if not duration and session.authorized_at and session.expires_at:
+            duration = max(0, int((session.expires_at - session.authorized_at).total_seconds()))
+        if duration > 0:
+            label = session.name.strip() if session.name else f"Dispositivo {session.client_mac[-8:]}"
+            longest.append({"sessionId": session.id, "label": label, "site": session.site, "method": method, "durationSeconds": duration})
+
+    connections_by_day = [{"date": day, "label": day[5:], "count": count} for day, count in days.items()]
+    ranked_days = sorted(connections_by_day, key=lambda item: item["count"], reverse=True)
+    quiet_days = sorted(connections_by_day, key=lambda item: (item["count"], item["date"]))
+    return {
+        "connectionsByDay": connections_by_day,
+        "bestDays": ranked_days[:5],
+        "quietDays": quiet_days[:5],
+        "authMethods": [{"method": method.lower(), "count": count} for method, count in method_counts.items() if count > 0],
+        "longestSessions": sorted(longest, key=lambda item: item["durationSeconds"], reverse=True)[:5],
+        "periodDays": 30,
+    }
