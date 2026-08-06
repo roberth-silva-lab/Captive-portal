@@ -401,6 +401,18 @@ def _new_voucher_code() -> str:
     return "RF-" + "-".join(chunks)
 
 
+def _normalize_voucher_code(code: str) -> str:
+    return "".join(char for char in code.strip().upper() if char.isalnum())
+
+
+def _voucher_hash_candidates(code: str) -> set[str]:
+    normalized = _normalize_voucher_code(code)
+    candidates = {normalized, code.strip().upper()}
+    if normalized.startswith("RF") and len(normalized) == 10:
+        candidates.add(f"RF-{normalized[2:6]}-{normalized[6:10]}")
+    return {secret_hash(candidate) for candidate in candidates if candidate}
+
+
 def _voucher_label(code: str) -> str:
     return code
 
@@ -657,10 +669,12 @@ def create_vouchers(payload: VoucherCreateRequest, db: Session = Depends(get_db)
     created = []
     for _ in range(payload.quantity):
         code = _new_voucher_code()
-        while db.scalar(select(Voucher).where(Voucher.code_hash == secret_hash(code))):
+        normalized_code = _normalize_voucher_code(code)
+        while db.scalar(select(Voucher).where(Voucher.code_hash.in_(_voucher_hash_candidates(code)))):
             code = _new_voucher_code()
+            normalized_code = _normalize_voucher_code(code)
         voucher = Voucher(
-            code_hash=secret_hash(code),
+            code_hash=secret_hash(normalized_code),
             code_label=_voucher_label(code),
             description=payload.description,
             duration_minutes=payload.durationMinutes,

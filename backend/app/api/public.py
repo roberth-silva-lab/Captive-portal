@@ -130,6 +130,18 @@ VALID_AUTH_METHODS = {"voucher", "cpf", "email"}
 DEFAULT_AUTH_METHODS = ["voucher", "cpf", "email"]
 
 
+def _normalize_voucher_code(code: str) -> str:
+    return "".join(char for char in code.strip().upper() if char.isalnum())
+
+
+def _voucher_hash_candidates(code: str) -> set[str]:
+    normalized = _normalize_voucher_code(code)
+    candidates = {normalized, code.strip().upper()}
+    if normalized.startswith("RF") and len(normalized) == 10:
+        candidates.add(f"RF-{normalized[2:6]}-{normalized[6:10]}")
+    return {secret_hash(candidate) for candidate in candidates if candidate}
+
+
 def _auth_methods_from_json(raw: str | None) -> list[str]:
     try:
         value = json.loads(raw or "[]")
@@ -254,9 +266,9 @@ async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Sessio
     ensure_not_in_maintenance(db)
     ip = client_ip(request)
     enforce_rate_limit(db, payload.clientMac, ip, "voucher")
-    code_hash = secret_hash(payload.code.strip().upper())
+    code_hashes = _voucher_hash_candidates(payload.code)
     now = utcnow()
-    voucher = db.scalar(select(Voucher).where(Voucher.code_hash == code_hash, Voucher.is_active.is_(True)))
+    voucher = db.scalar(select(Voucher).where(Voucher.code_hash.in_(code_hashes), Voucher.is_active.is_(True)))
     if not voucher or (voucher.expires_at and voucher.expires_at <= now):
         record_attempt(db, payload.clientMac, ip, "voucher", False, "invalid_voucher")
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Voucher invalido.")

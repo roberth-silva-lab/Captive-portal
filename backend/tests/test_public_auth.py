@@ -66,6 +66,38 @@ async def test_voucher_authorization_with_mocked_unifi(client, monkeypatch):
 
 
 
+
+@pytest.mark.asyncio
+async def test_rf_voucher_accepts_code_without_hyphens(client, monkeypatch):
+    from app.core.database import SessionLocal
+
+    mock_unifi_context(monkeypatch, site_id="site-esdras", site_name="Esdras")
+    db = SessionLocal()
+    db.add(Voucher(code_hash=secret_hash("RFABCD1234"), code_label="RF-ABCD-1234", duration_minutes=30, device_limit=1, site="Esdras", site_id="site-esdras", site_name_snapshot="Esdras"))
+    db.commit()
+    db.close()
+
+    response = client.post("/api/auth/voucher", json={"clientMac": "AA:BB:CC:DD:EE:10", "code": "RFABCD1234", "termsAccepted": True})
+
+    assert response.status_code == 200
+    assert response.json()["authorized"] is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_rf_voucher_hash_with_hyphens_still_works(client, monkeypatch):
+    from app.core.database import SessionLocal
+
+    mock_unifi_context(monkeypatch, site_id="site-esdras", site_name="Esdras")
+    db = SessionLocal()
+    db.add(Voucher(code_hash=secret_hash("RF-ABCD-1234"), code_label="RF-ABCD-1234", duration_minutes=30, device_limit=1, site="Esdras", site_id="site-esdras", site_name_snapshot="Esdras"))
+    db.commit()
+    db.close()
+
+    response = client.post("/api/auth/voucher", json={"clientMac": "AA:BB:CC:DD:EE:11", "code": "RFABCD1234", "termsAccepted": True})
+
+    assert response.status_code == 200
+    assert response.json()["authorized"] is True
+
 def test_cpf_auth_rejects_invalid_cpf_before_unifi(client):
     response = client.post(
         "/api/auth/cpf",

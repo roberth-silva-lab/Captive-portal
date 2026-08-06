@@ -60,8 +60,15 @@ export const formatCpf = (value: string) => {
     .replace(/(\d{3})(\d)/, '$1.$2')
     .replace(/(\d{3})(\d{1,2})$/, '$1-$2')
 }
-export const normalizeVoucher = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 32)
-export const displayVoucher = (value: string) => normalizeVoucher(value).replace(/(.{4})/g, '$1-').replace(/-$/, '')
+export const normalizeVoucher = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)
+export const displayVoucher = (value: string) => {
+  const normalized = normalizeVoucher(value)
+  if (normalized.startsWith('RF')) {
+    const body = normalized.slice(2)
+    return ['RF', body.slice(0, 4), body.slice(4, 8)].filter(Boolean).join('-')
+  }
+  return normalized.replace(/(.{4})/g, '$1-').replace(/-$/, '')
+}
 export const validEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
 export const formatPhone = (value: string) => {
   const digits = onlyDigits(value).slice(0, 11)

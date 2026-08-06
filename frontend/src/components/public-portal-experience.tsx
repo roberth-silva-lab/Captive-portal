@@ -3,7 +3,7 @@ import type { CSSProperties, ReactNode, RefObject } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { Method, Notice, PortalAppearance, PortalSettings, PreviewDevice, PreviewState, SessionStatus, Stage } from '../types'
-import { cssVars, formatClock, formatCountdown } from '../utils'
+import { cssVars, displayVoucher, formatClock, formatCountdown } from '../utils'
 
 type PublicExperienceSettings = Pick<PortalSettings, 'logoUrl' | 'primaryColor' | 'bannerText' | 'welcomeText' | 'successMessage' | 'networkName' | 'establishmentName' | 'termsText' | 'allowedAuthMethods'>
 
@@ -140,7 +140,7 @@ const normalizeTermsText = (value?: string) => {
   return trimmed
 }
 
-const voucherChars = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8).split('')
+const voucherDisplaySlots = (value: string) => displayVoucher(value).split('').filter(Boolean)
 const CAPTIVE_CLOSE_DELAY_SECONDS = 3
 const DEFAULT_CLOSE_REDIRECT_URL = 'https://www.gstatic.com/generate_204'
 
@@ -276,9 +276,9 @@ function EmailCodeStep(props: PublicPortalExperienceProps & { preview: boolean }
 
 function VoucherField(props: PublicPortalExperienceProps & { preview: boolean; method: Method }) {
   const value = props.preview ? previewValue('voucher', props.previewState) : props.identifier
-  const chars = voucherChars(value)
-  const maxSlots = Math.max(8, Math.min(16, chars.length || 8))
-  return <label className="field-label voucher-code-field" htmlFor="portal-voucher"><span>Voucher</span><div className={`voucher-entry ${props.fieldError === 'identifier' ? 'input-error' : ''}`}><input id="portal-voucher" value={value} onChange={(event) => props.onIdentifierChange?.(event.target.value)} inputMode="text" autoComplete="off" aria-label="Voucher" maxLength={39} readOnly={props.preview} autoFocus /><div className="voucher-slots" aria-hidden="true">{Array.from({ length: maxSlots }).map((_, index) => <span key={index} className={chars[index] ? 'filled' : ''}>{chars[index] ?? ''}</span>)}</div></div><small className="field-help">Informe o código fornecido pela administração.</small></label>
+  const slots = voucherDisplaySlots(value)
+  const displaySlots = Array.from({ length: 12 }, (_, index) => slots[index] ?? '')
+  return <label className="field-label voucher-code-field" htmlFor="portal-voucher"><span>Voucher</span><div className={`voucher-entry ${props.fieldError === 'identifier' ? 'input-error' : ''}`}><input id="portal-voucher" value={value} onChange={(event) => props.onIdentifierChange?.(event.target.value)} inputMode="text" autoComplete="off" aria-label="Voucher" maxLength={12} readOnly={props.preview} autoFocus /><div className="voucher-slots" aria-hidden="true">{displaySlots.map((char, index) => <span key={index} className={char === '-' ? 'separator' : char ? 'filled' : ''}>{char}</span>)}</div></div><small className="field-help">Informe o código no formato RF-XXXX-XXXX.</small></label>
 }
 function IdentifierField(props: PublicPortalExperienceProps & { label: string; placeholder: string; help?: string; inputMode: 'text' | 'numeric' | 'email'; autoComplete?: string; fieldName?: string; preview: boolean; method: Method }) {
   return <label className="field-label" htmlFor="portal-identifier"><span>{props.label}</span><input id="portal-identifier" name={props.fieldName || `portal-${props.method}-identifier`} data-lpignore={props.method === 'cpf' ? 'true' : undefined} data-1p-ignore={props.method === 'cpf' ? 'true' : undefined} className={props.fieldError === 'identifier' ? 'input-error' : ''} value={props.preview ? previewValue(props.method, props.previewState) : props.identifier} onChange={(event) => props.onIdentifierChange?.(event.target.value)} inputMode={props.inputMode} autoComplete={props.autoComplete || 'off'} placeholder={props.placeholder} maxLength={props.method === 'voucher' ? 39 : undefined} readOnly={props.preview} />{props.help ? <small className="field-help">{props.help}</small> : null}</label>
