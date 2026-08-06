@@ -288,6 +288,7 @@ class PortalSiteSetting(Base):
     success_message: Mapped[str] = mapped_column(Text, default="")
     reauthentication_message: Mapped[str] = mapped_column(Text, default="")
     terms_text: Mapped[str] = mapped_column(Text, default="")
+    auth_methods_json: Mapped[str] = mapped_column(Text, default='["voucher","cpf","email"]')
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

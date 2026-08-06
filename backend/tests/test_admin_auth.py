@@ -84,3 +84,50 @@ def test_admin_password_reset_with_email_code(client, admin_user, monkeypatch):
     assert old_login.status_code == 401
     new_login = client.post("/api/admin/login", json={"email": "admin@example.com", "password": "AnotherStrongPassword123!"})
     assert new_login.status_code == 200
+
+
+def test_superadmin_reveals_sensitive_session_data_with_audit(client, admin_user):
+    from app.core.database import SessionLocal
+    from app.models import AuditLog, AuthorizationMethod
+    from app.services.sessions import authorize_session
+
+    login = client.post("/api/admin/login", json={"email": "admin@example.com", "password": "StrongPassword123!"})
+    assert login.status_code == 200
+
+    db = SessionLocal()
+    session = authorize_session(
+        db,
+        client_mac="aa:bb:cc:dd:ee:ff",
+        site="Sede",
+        method=AuthorizationMethod.CPF,
+        minutes=60,
+        unifi_client_id="client-1",
+        name="Visitante Teste",
+        email="visitante@example.com",
+        cpf="52998224725",
+        phone="11999990000",
+        ip="192.0.2.10",
+    )
+    session_id = session.id
+    db.close()
+
+    response = client.post(
+        f"/api/admin/sessions/{session_id}/reveal-sensitive",
+        headers={"X-CSRF-Token": csrf_cookie(client)},
+        json={"reason": "Atendimento formal ao titular"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "Visitante Teste"
+    assert body["email"] == "visitante@example.com"
+    assert body["cpf"] == "52998224725"
+    assert body["phone"] == "11999990000"
+
+    db = SessionLocal()
+    audit = db.query(AuditLog).filter(AuditLog.event == "session.sensitive_revealed").one()
+    db.close()
+    assert audit.target_id == session_id
+    assert "visitante@example.com" not in audit.metadata_json
+    assert "52998224725" not in audit.metadata_json
+    assert "Atendimento formal" in audit.metadata_json

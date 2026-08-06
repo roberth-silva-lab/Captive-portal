@@ -5,6 +5,27 @@ from app.models import Voucher
 from app.security.tokens import secret_hash
 
 
+def mock_unifi_context(monkeypatch, site_id="site-esdras", site_name="Esdras", authorized=True):
+    from app.api import public
+
+    async def resolve_client_context(**kwargs):
+        return UniFiClientContext(
+            site_id=site_id,
+            site_name=site_name,
+            client_id="client-1",
+            client=UniFiClientRecord(id="client-1", mac=kwargs["client_mac"], site_id=site_id, authorized=False),
+        )
+
+    async def client_by_mac(site_id_arg, mac):
+        return UniFiClientRecord(id="client-1", mac=mac, site_id=site_id_arg, authorized=authorized)
+
+    async def authorize_guest(**kwargs):
+        return {"action": "AUTHORIZE_GUEST_ACCESS"}
+
+    monkeypatch.setattr(public.unifi_client, "resolve_client_context", resolve_client_context)
+    monkeypatch.setattr(public.unifi_client, "get_client_by_mac", client_by_mac)
+    monkeypatch.setattr(public.unifi_client, "authorize_guest", authorize_guest)
+
 @pytest.mark.asyncio
 async def test_voucher_authorization_with_mocked_unifi(client, monkeypatch):
     from app.api import public
@@ -63,6 +84,7 @@ def test_request_email_code_invalidates_previous_codes(client, monkeypatch):
     from app.core.database import SessionLocal
     from app.models import EmailLoginCode
 
+    mock_unifi_context(monkeypatch, site_id="site-sede", site_name="Sede")
     sent: list[str] = []
     monkeypatch.setattr("app.api.public.send_email", lambda to_email, subject, text, html_body=None: sent.append(to_email))
 
@@ -89,6 +111,7 @@ def test_request_email_code_returns_503_when_smtp_fails_without_storing_code(cli
     def fail_send(*args, **kwargs):
         raise EmailDeliveryError("smtp failed")
 
+    mock_unifi_context(monkeypatch, site_id="site-sede", site_name="Sede")
     monkeypatch.setattr("app.api.public.send_email", fail_send)
 
     response = client.post(
@@ -99,6 +122,64 @@ def test_request_email_code_returns_503_when_smtp_fails_without_storing_code(cli
     assert response.status_code == 503
     assert "visitante@example.com" not in response.text
 
+    db = SessionLocal()
+    rows = db.query(EmailLoginCode).all()
+    db.close()
+    assert rows == []
+
+
+def test_settings_returns_site_allowed_auth_methods(client, monkeypatch):
+    from app.core.database import SessionLocal
+    from app.models import PortalSiteSetting
+
+    mock_unifi_context(monkeypatch, site_id="site-esdras", site_name="Esdras")
+    db = SessionLocal()
+    db.add(PortalSiteSetting(site_id="site-esdras", site_name="Esdras", display_name="Esdras", auth_methods_json='["voucher"]'))
+    db.commit()
+    db.close()
+
+    response = client.get("/api/settings?clientMac=AA:BB:CC:DD:EE:FF")
+
+    assert response.status_code == 200
+    assert response.json()["allowedAuthMethods"] == ["voucher"]
+
+
+@pytest.mark.asyncio
+async def test_cpf_auth_rejected_when_site_allows_only_voucher(client, monkeypatch):
+    from app.core.database import SessionLocal
+    from app.models import PortalSiteSetting
+
+    mock_unifi_context(monkeypatch, site_id="site-esdras", site_name="Esdras")
+    db = SessionLocal()
+    db.add(PortalSiteSetting(site_id="site-esdras", site_name="Esdras", auth_methods_json='["voucher"]'))
+    db.commit()
+    db.close()
+
+    response = client.post(
+        "/api/auth/cpf",
+        json={"clientMac": "AA:BB:CC:DD:EE:FF", "name": "Visitante Teste", "cpf": "529.982.247-25", "termsAccepted": True},
+    )
+
+    assert response.status_code == 403
+    assert "CPF" not in response.text
+
+
+def test_email_code_rejected_when_site_allows_only_voucher(client, monkeypatch):
+    from app.core.database import SessionLocal
+    from app.models import EmailLoginCode, PortalSiteSetting
+
+    mock_unifi_context(monkeypatch, site_id="site-esdras", site_name="Esdras")
+    db = SessionLocal()
+    db.add(PortalSiteSetting(site_id="site-esdras", site_name="Esdras", auth_methods_json='["voucher"]'))
+    db.commit()
+    db.close()
+
+    response = client.post(
+        "/api/auth/email/request-code",
+        json={"clientMac": "AA:BB:CC:DD:EE:FF", "email": "visitante@example.com", "termsAccepted": True},
+    )
+
+    assert response.status_code == 403
     db = SessionLocal()
     rows = db.query(EmailLoginCode).all()
     db.close()

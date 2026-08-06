@@ -6,6 +6,20 @@ from pydantic import AliasChoices, BaseModel, EmailStr, Field, field_validator
 from app.models import AdminRole, NotificationType
 
 VALID_SITES = {"ALL", "Default", "Sede", "Esdras", "DMA"}
+VALID_AUTH_METHODS = {"voucher", "cpf", "email"}
+
+
+def normalize_auth_methods(value: list[str]) -> list[str]:
+    methods: list[str] = []
+    for item in value:
+        method = str(item).strip().lower()
+        if method not in VALID_AUTH_METHODS:
+            raise ValueError("Metodo de autenticacao invalido.")
+        if method not in methods:
+            methods.append(method)
+    if not methods:
+        raise ValueError("Selecione ao menos um metodo de autenticacao.")
+    return methods
 
 
 class AdminLoginRequest(BaseModel):
@@ -132,6 +146,19 @@ class SessionOperationResponse(BaseModel):
     expiresAt: datetime | None = None
 
 
+class SensitiveSessionRevealRequest(BaseModel):
+    reason: str = Field(min_length=8, max_length=300)
+
+
+class SensitiveSessionRevealResponse(BaseModel):
+    sessionId: str
+    name: str = ""
+    email: str = ""
+    cpf: str = ""
+    phone: str = ""
+    revealedAt: datetime
+
+
 class AccessBlockResponse(BaseModel):
     id: str
     scope: str
@@ -244,7 +271,13 @@ class PortalAppearanceRequest(BaseModel):
     welcomeText: str = Field(default="Conecte-se de forma segura à rede de visitantes.", min_length=1, max_length=300)
     successMessage: str = Field(default="Acesso liberado. Você já pode navegar na Internet.", min_length=1, max_length=300)
     expiredMessage: str = Field(default="Sua sessão expirou. Autentique-se novamente para continuar usando o Wi-Fi.", min_length=1, max_length=300)
-    termsText: str = Field(default="Ao continuar, Você aceita os termos de uso da rede.", min_length=1, max_length=8000)
+    termsText: str = Field(default="Ao continuar, VocÃª aceita os termos de uso da rede.", min_length=1, max_length=8000)
+    authMethods: list[str] = Field(default_factory=lambda: ["voucher", "cpf", "email"], min_length=1, max_length=3)
+
+    @field_validator("authMethods")
+    @classmethod
+    def valid_auth_methods(cls, value: list[str]) -> list[str]:
+        return normalize_auth_methods(value)
 
 
 class PortalAppearanceResponse(PortalAppearanceRequest):

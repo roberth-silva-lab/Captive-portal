@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Method, Notice, PortalAppearance, PortalSettings, PreviewDevice, PreviewState, SessionStatus, Stage } from '../types'
 import { cssVars, formatClock, formatCountdown } from '../utils'
 
-type PublicExperienceSettings = Pick<PortalSettings, 'logoUrl' | 'primaryColor' | 'bannerText' | 'welcomeText' | 'successMessage' | 'networkName' | 'establishmentName' | 'termsText'>
+type PublicExperienceSettings = Pick<PortalSettings, 'logoUrl' | 'primaryColor' | 'bannerText' | 'welcomeText' | 'successMessage' | 'networkName' | 'establishmentName' | 'termsText' | 'allowedAuthMethods'>
 
 type PublicPortalExperienceProps = {
   settings: PublicExperienceSettings | PortalAppearance
@@ -227,6 +227,7 @@ function WelcomeStep({ settings, institutionName, networkName, accepted, fieldEr
 }
 
 function MethodStep(props: PublicPortalExperienceProps & { preview: boolean }) {
+  const allowedMethods = props.preview ? (["voucher", "cpf", "email"] as Method[]) : (props.settings.allowedAuthMethods?.length ? props.settings.allowedAuthMethods : (["voucher", "cpf", "email"] as Method[]))
   const initialMethod = props.preview && props.previewState !== 'initial' ? props.method : null
   const [activeMethod, setActiveMethod] = useState<Method | null>(initialMethod)
 
@@ -244,7 +245,7 @@ function MethodStep(props: PublicPortalExperienceProps & { preview: boolean }) {
   }
 
   if (!activeMethod) {
-    return <div className="portal-step method-step"><div className="portal-heading compact public-method-heading"><span className="public-method-pill">{text.choosePrompt}</span><h1 id="portal-title">{text.chooseTitle}</h1><p>{text.chooseDescription}</p></div><div className="method-tabs method-cards public-method-list" role="list" aria-label="Metodo de acesso">{(['voucher', 'cpf', 'email'] as Method[]).map((item) => <button key={item} onClick={() => openMethod(item)} type="button"><span className="public-method-icon"><MethodIcon method={item} /></span><span>{methodCopy[item].title}</span><small>{methodCopy[item].description}</small><ArrowRight className="public-method-arrow" /></button>)}</div>{props.message ? <p className={`feedback ${props.messageTone || 'info'}`} role="status" aria-live="polite">{props.message}</p> : null}</div>
+    return <div className="portal-step method-step"><div className="portal-heading compact public-method-heading"><span className="public-method-pill">{text.choosePrompt}</span><h1 id="portal-title">{allowedMethods.length === 1 ? `Acesse com ${methodCopy[allowedMethods[0]].title}` : text.chooseTitle}</h1><p>{allowedMethods.length === 1 ? 'Esta unidade definiu uma forma única de acesso para visitantes.' : text.chooseDescription}</p></div><div className="method-tabs method-cards public-method-list" role="list" aria-label="Metodo de acesso">{allowedMethods.map((item) => <button key={item} onClick={() => openMethod(item)} type="button"><span className="public-method-icon"><MethodIcon method={item} /></span><span>{methodCopy[item].title}</span><small>{methodCopy[item].description}</small><ArrowRight className="public-method-arrow" /></button>)}</div>{props.message ? <p className={`feedback ${props.messageTone || 'info'}`} role="status" aria-live="polite">{props.message}</p> : null}</div>
   }
 
   return <MethodFormScreen key={`${activeMethod}-${props.formInstanceKey ?? 0}`} {...props} method={activeMethod} onBack={backToChoices} />

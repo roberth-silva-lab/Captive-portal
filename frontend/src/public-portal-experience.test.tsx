@@ -1,4 +1,4 @@
-﻿import React, { act, useState } from 'react'
+import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { JSDOM } from 'jsdom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -20,6 +20,7 @@ const settings: PortalSettings = {
   maintenance: { enabled: false, active: false, scheduled: false, title: '', message: '', startsAt: null, endsAt: null, imageUrl: '', visualConfig: {} },
   notifications: [],
   expirationWarningMinutes: [30, 10, 5],
+  allowedAuthMethods: ['voucher', 'cpf', 'email'],
 }
 
 const session: SessionStatus = {
@@ -112,6 +113,13 @@ describe('public portal production behavior', () => {
     render(<PublicPortalExperience {...baseProps} accepted={false} termsOpen />)
     const unicodeNeedle = `${String.fromCharCode(92)}u00`
     expect(container.textContent).not.toContain(unicodeNeedle)
+  })
+
+  it('shows only voucher when the site policy allows only voucher', () => {
+    render(<PublicPortalExperience {...baseProps} settings={{ ...settings, allowedAuthMethods: ['voucher'] }} />)
+    expect(container.textContent).toContain('Voucher')
+    expect(container.textContent).not.toContain('CPF')
+    expect(container.textContent).not.toContain('E-mail')
   })
 
   it('does not show CPF helper text when CPF form opens', () => {

@@ -8,6 +8,7 @@ import {
   Megaphone,
   Menu,
   MonitorCheck,
+  Palette,
   Radio,
   Settings,
   Ticket,
@@ -42,7 +43,7 @@ export function AdminSidebar({ active, open, onClose, onSelect }: { active: Admi
     { label: 'Visão geral', items: [{ id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard /> }] },
     { label: 'Acesso', items: [{ id: 'sessions', label: 'Sessões', icon: <MonitorCheck /> }, { id: 'visitors', label: 'Usuários/Visitantes', icon: <UsersRound /> }, { id: 'vouchers', label: 'Vouchers', icon: <Ticket /> }] },
     { label: 'Infraestrutura', items: [{ id: 'sites', label: 'Sites', icon: <MapPinned /> }, { id: 'access-points', label: 'Access Points', icon: <Radio /> }] },
-    { label: 'Comunicação', items: [{ id: 'notices', label: 'Avisos', icon: <Megaphone /> }, { id: 'maintenance', label: 'Manutenção', icon: <Clock /> }] },
+    { label: 'Comunicação', items: [{ id: 'portal', label: 'Portal público', icon: <Palette /> }, { id: 'notices', label: 'Avisos', icon: <Megaphone /> }, { id: 'maintenance', label: 'Manutenção', icon: <Clock /> }] },
     { label: 'Administração', items: [{ id: 'admins', label: 'Administradores', icon: <UserCog /> }, { id: 'audit', label: 'Auditoria', icon: <History /> }, { id: 'settings', label: 'Configurações', icon: <Settings /> }] },
   ]
   const toggleCollapsed = () => {

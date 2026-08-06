@@ -63,6 +63,8 @@ from app.schemas.admin import (
     PortalAppearanceResponse,
     PortalSiteAppearanceRequest,
     PortalSiteAppearanceResponse,
+    SensitiveSessionRevealRequest,
+    SensitiveSessionRevealResponse,
     SessionActionRequest,
     SessionBlockRequest,
     SessionExtendRequest,
@@ -74,6 +76,7 @@ from app.schemas.admin import (
     VoucherResponse,
 )
 from app.security.passwords import hash_password, verify_password
+from app.security.pii import decrypt_text
 from app.security.tokens import random_token_urlsafe, secret_hash
 from app.services.media_storage import LocalMediaStorage
 from app.services.rate_limit import enforce_rate_limit, record_attempt
@@ -106,7 +109,35 @@ PORTAL_APPEARANCE_DEFAULTS = {
     "success_message": "Acesso liberado. Voce ja pode navegar na Internet.",
     "expired_message": "Sua sessao expirou. Autentique-se novamente para continuar usando o Wi-Fi.",
     "terms_text": "Ao continuar, voce aceita os termos de uso da rede.",
+    "auth_methods": '["voucher","cpf","email"]',
 }
+
+
+VALID_AUTH_METHODS = {"voucher", "cpf", "email"}
+DEFAULT_AUTH_METHODS = ["voucher", "cpf", "email"]
+
+
+def _auth_methods_from_json(raw: str | None) -> list[str]:
+    try:
+        value = json.loads(raw or "[]")
+    except json.JSONDecodeError:
+        value = []
+    methods: list[str] = []
+    if isinstance(value, list):
+        for item in value:
+            method = str(item).strip().lower()
+            if method in VALID_AUTH_METHODS and method not in methods:
+                methods.append(method)
+    return methods or DEFAULT_AUTH_METHODS.copy()
+
+
+def _auth_methods_json(methods: list[str]) -> str:
+    cleaned: list[str] = []
+    for item in methods:
+        method = str(item).strip().lower()
+        if method in VALID_AUTH_METHODS and method not in cleaned:
+            cleaned.append(method)
+    return json.dumps(cleaned or DEFAULT_AUTH_METHODS, separators=(",", ":"))
 
 
 def portal_setting_value(db: Session, key: str) -> str:
@@ -140,6 +171,7 @@ def _portal_appearance(db: Session) -> PortalAppearanceResponse:
         successMessage=portal_setting_value(db, "success_message"),
         expiredMessage=portal_setting_value(db, "expired_message"),
         termsText=portal_setting_value(db, "terms_text"),
+        authMethods=_auth_methods_from_json(portal_setting_value(db, "auth_methods")),
         updatedAt=updated_at,
     )
 
@@ -168,6 +200,7 @@ def _portal_site_appearance(db: Session, site_id: str, site_name: str | None = N
         successMessage=(row.success_message if row and row.success_message else base.successMessage),
         expiredMessage=(row.reauthentication_message if row and row.reauthentication_message else base.expiredMessage),
         termsText=(row.terms_text if row and row.terms_text else base.termsText),
+        authMethods=(_auth_methods_from_json(row.auth_methods_json) if row else base.authMethods),
         updatedAt=(row.updated_at if row else base.updatedAt),
     )
 
@@ -743,6 +776,7 @@ def update_portal_appearance(payload: PortalAppearanceRequest, db: Session = Dep
         "success_message": payload.successMessage,
         "expired_message": payload.expiredMessage,
         "terms_text": payload.termsText,
+        "auth_methods": _auth_methods_json(payload.authMethods),
         "appearance_updated_at": utcnow().isoformat(),
     }
     for key, value in values.items():
@@ -777,6 +811,7 @@ def update_site_portal_appearance(site_id: str, payload: PortalSiteAppearanceReq
     row.success_message = payload.successMessage
     row.reauthentication_message = payload.expiredMessage
     row.terms_text = payload.termsText
+    row.auth_methods_json = _auth_methods_json(payload.authMethods)
     row.enabled = payload.enabled
     row.updated_at = utcnow()
     audit(db, admin, "portal_appearance.site_updated", "portal_site_settings", selected_site, {"siteId": selected_site, "before": before, "after": payload.model_dump(mode="json")})
@@ -974,6 +1009,28 @@ def list_sessions(siteId: str | None = None, q: str | None = None, status_filter
             }
         )
     return rows
+
+
+@router.post("/sessions/{session_id}/reveal-sensitive", response_model=SensitiveSessionRevealResponse, dependencies=[Depends(require_csrf)])
+def reveal_session_sensitive_data(session_id: str, payload: SensitiveSessionRevealRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN))):
+    session = db.get(GuestSession, session_id)
+    if not session:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sessao nao encontrada.")
+    fields = []
+    email = decrypt_text(session.email_encrypted)
+    cpf = decrypt_text(session.cpf_encrypted)
+    phone = decrypt_text(session.phone_encrypted)
+    if session.name:
+        fields.append("name")
+    if email:
+        fields.append("email")
+    if cpf:
+        fields.append("cpf")
+    if phone:
+        fields.append("phone")
+    audit(db, admin, "session.sensitive_revealed", "guest_session", session.id, {"reason": payload.reason, "fields": fields, "site": session.site})
+    db.commit()
+    return SensitiveSessionRevealResponse(sessionId=session.id, name=session.name or "", email=email, cpf=cpf, phone=phone, revealedAt=utcnow())
 
 
 @router.post("/admins/invitations", response_model=AdminInviteResponse, dependencies=[Depends(require_csrf)])

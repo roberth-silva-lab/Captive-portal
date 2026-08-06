@@ -191,3 +191,4 @@ class PortalSettingsResponse(BaseModel):
     maintenance: MaintenanceResponse = Field(default_factory=MaintenanceResponse)
     notifications: list[NotificationResponse] = Field(default_factory=list)
     expirationWarningMinutes: list[int] = Field(default_factory=lambda: [30, 10, 5])
+    allowedAuthMethods: list[str] = Field(default_factory=lambda: ["voucher", "cpf", "email"])

@@ -126,9 +126,39 @@ def ensure_not_in_maintenance(db: Session, site_id: str | None = None) -> None:
 
 
 
+VALID_AUTH_METHODS = {"voucher", "cpf", "email"}
+DEFAULT_AUTH_METHODS = ["voucher", "cpf", "email"]
+
+
+def _auth_methods_from_json(raw: str | None) -> list[str]:
+    try:
+        value = json.loads(raw or "[]")
+    except json.JSONDecodeError:
+        value = []
+    methods: list[str] = []
+    if isinstance(value, list):
+        for item in value:
+            method = str(item).strip().lower()
+            if method in VALID_AUTH_METHODS and method not in methods:
+                methods.append(method)
+    return methods or DEFAULT_AUTH_METHODS.copy()
+
+
 def _site_setting_value(row: PortalSiteSetting | None, attr: str, fallback: str) -> str:
     value = getattr(row, attr, "") if row else ""
     return value or fallback
+
+
+def allowed_auth_methods(db: Session, site_id: str | None = None) -> list[str]:
+    row = db.scalar(select(PortalSiteSetting).where(PortalSiteSetting.site_id == site_id, PortalSiteSetting.enabled.is_(True))) if site_id else None
+    if row:
+        return _auth_methods_from_json(row.auth_methods_json)
+    return _auth_methods_from_json(portal_setting(db, "auth_methods", '["voucher","cpf","email"]'))
+
+
+def ensure_auth_method_allowed(db: Session, site_id: str | None, method: str) -> None:
+    if method.lower() not in allowed_auth_methods(db, site_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Esta forma de acesso nao esta habilitada para esta unidade.")
 
 
 @media_router.get("/media/{media_id}")
@@ -179,9 +209,10 @@ async def settings(site: str | None = None, clientMac: str | None = None, apMac:
         maintenance=maintenance,
         notifications=notices,
         expirationWarningMinutes=EXPIRATION_WARNINGS,
+        allowedAuthMethods=allowed_auth_methods(db, site_id),
     )
 
-async def _authorize_unifi(db_or_payload, payload_or_minutes, minutes: int | None = None, data_limit_mb: int | None = None, download_limit: int | None = None, upload_limit: int | None = None, requested_site: str | None = None) -> tuple[str, str]:
+async def _authorize_unifi(db_or_payload, payload_or_minutes, minutes: int | None = None, data_limit_mb: int | None = None, download_limit: int | None = None, upload_limit: int | None = None, requested_site: str | None = None, auth_method: str | None = None) -> tuple[str, str]:
     db = db_or_payload if isinstance(db_or_payload, Session) else None
     payload = payload_or_minutes if db is not None else db_or_payload
     selected_minutes = minutes if db is not None else int(payload_or_minutes)
@@ -193,6 +224,8 @@ async def _authorize_unifi(db_or_payload, payload_or_minutes, minutes: int | Non
         requested_site=requested_site,
     )
     if db is not None:
+        if auth_method:
+            ensure_auth_method_allowed(db, context.site_id, auth_method)
         _ensure_client_not_blocked(db, client_mac=payload.clientMac, site_id=context.site_id)
     await unifi_client.authorize_guest(site_id=context.site_id, client_id=context.client_id, minutes=selected_minutes, data_limit_mb=data_limit_mb, rx_kbps=download_limit, tx_kbps=upload_limit)
     confirmed = await unifi_client.get_client_by_mac(context.site_id, payload.clientMac)
@@ -236,6 +269,7 @@ async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Sessio
     if voucher_site and voucher_site not in {context.site_id, context.site_name}:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "site_mismatch")
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Este voucher nao e valido para esta unidade.")
+    ensure_auth_method_allowed(db, context.site_id, "voucher")
     _ensure_client_not_blocked(db, client_mac=payload.clientMac, site_id=context.site_id)
     used_devices = db.scalars(select(GuestSession.client_mac).where(GuestSession.voucher_id == voucher.id).distinct()).all()
     max_devices = voucher.max_devices or voucher.device_limit
@@ -264,7 +298,7 @@ async def auth_cpf(payload: CpfAuthRequest, request: Request, db: Session = Depe
     ip = client_ip(request)
     enforce_rate_limit(db, payload.clientMac, ip, "cpf")
     try:
-        site_id, client_id = await _authorize_unifi(db, payload, 60)
+        site_id, client_id = await _authorize_unifi(db, payload, 60, auth_method="cpf")
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "cpf", False, "unifi_error")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel confirmar a autorizacao no UniFi.") from exc
@@ -274,10 +308,16 @@ async def auth_cpf(payload: CpfAuthRequest, request: Request, db: Session = Depe
 
 
 @router.post("/auth/email/request-code")
-def request_email_code(payload: EmailCodeRequest, request: Request, db: Session = Depends(get_db)):
+async def request_email_code(payload: EmailCodeRequest, request: Request, db: Session = Depends(get_db)):
     ensure_not_in_maintenance(db)
     ip = client_ip(request)
     enforce_rate_limit(db, payload.clientMac, ip, "email")
+    try:
+        context = await unifi_client.resolve_client_context(client_mac=payload.clientMac, ap_mac=payload.apMac, requested_site=None)
+        ensure_auth_method_allowed(db, context.site_id, "email")
+    except UniFiError as exc:
+        record_attempt(db, payload.clientMac, ip, "email", False, "unifi_error")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel identificar a unidade no UniFi.") from exc
     code = str(int(random_token_urlsafe(4).encode().hex(), 16))[-6:].zfill(6)
     ttl_minutes = get_settings().email_code_ttl_minutes
     expires_at = utcnow() + timedelta(minutes=ttl_minutes)
@@ -320,7 +360,7 @@ async def verify_email_code(payload: EmailCodeVerify, request: Request, db: Sess
     row.consumed_at = utcnow()
     db.commit()
     try:
-        site_id, client_id = await _authorize_unifi(db, payload, 60)
+        site_id, client_id = await _authorize_unifi(db, payload, 60, auth_method="email")
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "email-verify", False, "unifi_error")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel confirmar a autorizacao no UniFi.") from exc
