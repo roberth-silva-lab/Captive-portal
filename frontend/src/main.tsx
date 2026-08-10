@@ -305,16 +305,18 @@ function Portal() {
       return
     }
     setEmailSending(true)
-    setMessage('Liberando acesso temporário para você receber o código...')
+    setMessage('Enviando código para o e-mail informado...')
     setMessageTone('info')
     try {
-      await api<{ ok: boolean }>('/api/portal/extend-provisional', { method: 'POST', body: JSON.stringify(basePayload) })
       const response = await api<EmailCodeResponse>('/api/auth/email/request-code', { method: 'POST', body: JSON.stringify({ ...basePayload, email: identifier.trim() }) })
       setCodeRequested(true)
       setEmailExpiresAt(response.expiresAt)
       setEmailCooldown(30)
-      setMessage('Acesso temporário liberado por alguns minutos. Enviamos um código para o e-mail informado.')
+      setMessage('Código enviado. Tentando liberar acesso temporário para você receber o e-mail neste aparelho...')
       setMessageTone('success')
+      api<{ ok: boolean }>('/api/portal/extend-provisional', { method: 'POST', body: JSON.stringify(basePayload) }).catch((error) => {
+        console.info('Temporary access after email code was not confirmed', { status: error instanceof ApiError ? error.status : 'unknown' })
+      })
       window.setTimeout(() => codeInputRef.current?.focus(), 80)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Não foi possível enviar o código.')
@@ -343,10 +345,18 @@ function Portal() {
       setStage('confirming')
       if (!result.authorized) throw new Error('O UniFi ainda não confirmou a autorização.')
       await wait(220)
-      setStage('checking')
-      const current = await api<SessionStatus>(`/api/session/status?clientMac=${encodeURIComponent(params.clientMac)}`)
-      if (!current.authorized) throw new Error('A sessão ainda não aparece como autorizada.')
-      setSession(current)
+      setSession({
+        status: 'authorized',
+        authorized: true,
+        authorizedAt: result.authorizedAt,
+        expiresAt: result.expiresAt,
+        serverNow: new Date().toISOString(),
+        remainingSeconds: result.remainingSeconds,
+        remainingMinutes: Math.max(0, Math.floor(result.remainingSeconds / 60)),
+        totalSeconds: result.totalSeconds,
+        ssid: params.ssid || networkName,
+        nextCheckSeconds: result.nextCheckSeconds ?? 30,
+      })
       setMessage(method === 'email' ? 'E-mail confirmado. Liberando seu acesso...' : 'Acesso liberado com sucesso.')
       setMessageTone('success')
       setStage('released')
