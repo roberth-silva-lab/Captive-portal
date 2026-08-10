@@ -4,12 +4,13 @@ from datetime import datetime, timedelta
 from typing import Any, cast
 
 from fastapi import APIRouter, Cookie, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, inspect, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.api.deps import client_ip, current_admin, require_csrf, require_role
+from app.api.health import _schema_findings
 from app.core.config import get_settings
-from app.core.database import get_db
+from app.core.database import engine, get_db
 from app.integrations.email.service import (
     EmailDeliveryError,
     admin_invitation_email,
@@ -39,6 +40,7 @@ from app.models import (
 )
 from app.models.entities import utcnow
 from app.schemas.admin import (
+    AdminEmailTestRequest,
     AdminInviteAcceptRequest,
     AdminInviteCreate,
     AdminInviteResponse,
@@ -596,6 +598,83 @@ def logout(response: Response, db: Session = Depends(get_db), admin: AdminUser =
 @router.get("/me", response_model=AdminMe)
 def me(admin: AdminUser = Depends(current_admin), db: Session = Depends(get_db)):
     return admin_out(admin, db)
+
+
+@router.get("/system-health")
+async def system_health(_admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    settings = get_settings()
+    database_status = "ok"
+    schema_status = "ok"
+    schema_findings: list[str] = []
+    alembic_revision = None
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("select 1"))
+            schema_findings = _schema_findings(conn)
+            tables = set(inspect(conn).get_table_names())
+            if engine.dialect.name == "postgresql" and "alembic_version" not in tables:
+                schema_findings.append("missing_table:alembic_version")
+            if "alembic_version" in tables:
+                alembic_revision = conn.execute(text("select version_num from alembic_version limit 1")).scalar_one_or_none()
+            if schema_findings:
+                schema_status = "incompatible"
+    except Exception:  # noqa: BLE001
+        database_status = "unavailable"
+        schema_status = "unknown"
+
+    unifi_status = "ok"
+    unifi_sites = 0
+    unifi_error = ""
+    try:
+        unifi_sites = len(await unifi_client.list_sites())
+    except UniFiError as exc:
+        unifi_status = "degraded"
+        unifi_error = str(exc)
+    except Exception:  # noqa: BLE001
+        unifi_status = "degraded"
+        unifi_error = "UniFi indisponivel."
+
+    smtp_configured = bool(settings.smtp_host and settings.smtp_user and settings.smtp_password)
+    status_value = "ok" if database_status == "ok" and schema_status == "ok" and unifi_status == "ok" and smtp_configured else "degraded"
+    return {
+        "status": status_value,
+        "database": {"status": database_status},
+        "schema": {"status": schema_status, "findings": schema_findings, "alembicRevision": alembic_revision},
+        "unifi": {"status": unifi_status, "sites": unifi_sites, "message": unifi_error},
+        "smtp": {"configured": smtp_configured, "host": settings.smtp_host, "port": settings.smtp_port, "from": settings.smtp_from},
+        "runtime": {
+            "environment": settings.app_env,
+            "adminEmailMfaRequired": settings.require_admin_email_mfa,
+            "mediaPublicBaseUrl": settings.media_public_base_url,
+            "publicBaseUrl": settings.public_base_url,
+            "adminBaseUrl": settings.admin_base_url,
+        },
+    }
+
+
+@router.post("/system-health/test-email", dependencies=[Depends(require_csrf)])
+def test_system_email(payload: AdminEmailTestRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    settings = get_settings()
+    subject = "Teste de e-mail do Portal Wi-Fi"
+    text_body = (
+        "Este e-mail confirma que o SMTP do Portal Wi-Fi conseguiu enviar mensagens.\n\n"
+        f"Ambiente: {settings.app_env}\n"
+        "Se voce recebeu esta mensagem, o envio esta operacional."
+    )
+    html_body = (
+        "<p>Este e-mail confirma que o SMTP do Portal Wi-Fi conseguiu enviar mensagens.</p>"
+        f"<p><strong>Ambiente:</strong> {settings.app_env}</p>"
+        "<p>Se voce recebeu esta mensagem, o envio esta operacional.</p>"
+    )
+    try:
+        send_email(str(payload.email), subject, text_body, html_body)
+    except EmailDeliveryError as exc:
+        audit(db, admin, "system_health.email_test_failed", "email", str(payload.email), {"reason": exc.reason})
+        db.commit()
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"Falha no envio de e-mail: {exc.reason}") from exc
+    audit(db, admin, "system_health.email_test_sent", "email", str(payload.email), {"smtpHost": settings.smtp_host})
+    db.commit()
+    return {"ok": True, "sentTo": payload.email}
 
 
 @router.get("/dashboard", response_model=DashboardSummary)

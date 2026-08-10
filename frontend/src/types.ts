@@ -13,6 +13,7 @@ export type DashboardChartsData = { connectionsByDay: DashboardDayPoint[]; bestD
 export type PortalAppearance = { networkName: string; establishmentName: string; logoUrl: string; primaryColor: string; bannerText: string; welcomeText: string; successMessage: string; expiredMessage: string; termsText: string; authMethods: Method[]; updatedAt?: string | null }
 export type PortalSiteAppearance = PortalAppearance & { siteId: string; siteName: string; enabled: boolean; hasOverride: boolean }
 export type MaintenanceAdmin = { maintenanceEnabled: boolean; maintenanceActive: boolean; maintenanceScheduled: boolean; maintenanceTitle: string; maintenanceMessage: string; maintenanceStartAt?: string | null; maintenanceEndAt?: string | null; maintenanceImageUrl: string; maintenanceVisualConfig?: Record<string, unknown>; updatedAt?: string | null }
+export type SystemHealth = { status: string; database: { status: string }; schema: { status: string; findings: string[]; alembicRevision?: string | null }; unifi: { status: string; sites: number; message: string }; smtp: { configured: boolean; host: string; port: number; from: string }; runtime: { environment: string; adminEmailMfaRequired: boolean; mediaPublicBaseUrl: string; publicBaseUrl: string; adminBaseUrl: string } }
 export type AdminMe = { id: string; email: string; name: string; role: string; siteIds: string[]; canSelectAllSites: boolean }
 export type AdminLoginChallenge = { mfaRequired: true; email: string; expiresAt: string }
 export type AllowedSite = { siteId: string; name: string; allowed: boolean }
@@ -33,7 +34,7 @@ export type SessionOperationResponse = { status: string; unifiConfirmed: boolean
 
 export type Method = 'voucher' | 'cpf' | 'email'
 export type Stage = 'idle' | 'validating' | 'authorizing' | 'confirming' | 'checking' | 'released' | 'error'
-export type AdminSection = 'dashboard' | 'sessions' | 'visitors' | 'vouchers' | 'notices' | 'maintenance' | 'sites' | 'site-detail' | 'access-points' | 'admins' | 'audit' | 'portal' | 'settings'
+export type AdminSection = 'dashboard' | 'sessions' | 'visitors' | 'vouchers' | 'notices' | 'maintenance' | 'sites' | 'site-detail' | 'access-points' | 'admins' | 'audit' | 'portal' | 'portal-sites' | 'health' | 'settings'
 export type SessionFilter = 'all' | 'online' | 'expiring-30' | 'expiring-10' | 'ended-today'
 export type PreviewDevice = 'mobile' | 'tablet' | 'desktop'
 export type PreviewState = 'initial' | 'voucher' | 'cpf' | 'email' | 'code-sent' | 'released' | 'maintenance' | 'notice'

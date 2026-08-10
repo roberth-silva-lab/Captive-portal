@@ -45,6 +45,10 @@ class AdminPasswordResetRequest(BaseModel):
     email: EmailStr
 
 
+class AdminEmailTestRequest(BaseModel):
+    email: EmailStr
+
+
 class AdminPasswordResetConfirmRequest(BaseModel):
     email: EmailStr
     code: str = Field(min_length=6, max_length=6, pattern="^[0-9]{6}$")

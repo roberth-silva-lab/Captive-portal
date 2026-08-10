@@ -61,6 +61,7 @@ import type {
   SessionStatus,
   SiteNode,
   Stage,
+  SystemHealth,
   Voucher,
 } from './types'
 import {
@@ -456,6 +457,8 @@ function Admin() {
   const [sessions, setSessions] = useState<GuestSessionRow[]>([])
   const [admins, setAdmins] = useState<AdminUserRow[]>([])
   const [adminInvitations, setAdminInvitations] = useState<AdminInviteResponse[]>([])
+  const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null)
+  const [testingEmail, setTestingEmail] = useState(false)
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all')
   const [loadStatus, setLoadStatus] = useState<'loading' | 'ready' | 'unauthenticated' | 'forbidden' | 'error'>('loading')
   const [error, setError] = useState('')
@@ -463,7 +466,7 @@ function Admin() {
     const path = window.location.pathname
     if (path.startsWith('/admin/sites/')) return 'site-detail'
     const section = path.split('/').filter(Boolean)[1] as AdminSection | undefined
-    const allowed: AdminSection[] = ['dashboard', 'sessions', 'visitors', 'vouchers', 'notices', 'maintenance', 'sites', 'access-points', 'admins', 'audit', 'portal', 'settings']
+    const allowed: AdminSection[] = ['dashboard', 'sessions', 'visitors', 'vouchers', 'notices', 'maintenance', 'sites', 'access-points', 'admins', 'audit', 'portal', 'portal-sites', 'health', 'settings']
     return section && allowed.includes(section) ? section : 'dashboard'
   })
   const [detailSiteId, setDetailSiteId] = useState(() => decodeURIComponent(window.location.pathname.startsWith('/admin/sites/') ? window.location.pathname.split('/').pop() || '' : ''))
@@ -506,7 +509,7 @@ function Admin() {
     loadInFlight.current = true
     setRefreshing(true)
     try {
-      const [me, allowedSiteRows, dash, chartRows, maint, appearanceRow, selectedAppearanceRow, siteRows, noticeRows, auditRows, voucherRows, visitorRows, accessPointRows, sessionRows, adminRows, invitationRows] = await Promise.all([
+      const [me, allowedSiteRows, dash, chartRows, maint, appearanceRow, selectedAppearanceRow, siteRows, noticeRows, auditRows, voucherRows, visitorRows, accessPointRows, sessionRows, adminRows, invitationRows, healthRow] = await Promise.all([
         api<AdminMe>('/api/admin/me'),
         api<AllowedSite[]>('/api/admin/sites/allowed').catch(() => []),
         api<Dashboard>(scopedPath('/api/admin/dashboard')),
@@ -523,6 +526,7 @@ function Admin() {
         api<GuestSessionRow[]>(scopedPath('/api/admin/sessions')).catch(() => []),
         api<AdminUserRow[]>('/api/admin/admins').catch(() => []),
         api<AdminInviteResponse[]>('/api/admin/admins/invitations').catch(() => []),
+        api<SystemHealth>('/api/admin/system-health').catch(() => null),
       ])
     const normalizedMe = { ...me, siteIds: asArray(me.siteIds) }
     const safeAllowedSites = asArray(allowedSiteRows)
@@ -545,6 +549,7 @@ function Admin() {
     setSessions(asArray(sessionRows))
       setAdmins(asArray(adminRows))
       setAdminInvitations(asArray(invitationRows))
+      setSystemHealth(healthRow)
       setLoadStatus('ready')
       setLastUpdatedAt(new Date())
       setRefreshError('')
@@ -616,6 +621,21 @@ function Admin() {
 
   const resetPassword = async (targetEmail: string, code: string, newPassword: string, confirmPassword: string) => {
     await api<{ ok: boolean }>('/api/admin/password/reset', { method: 'POST', body: JSON.stringify({ email: targetEmail, code, password: newPassword, confirmPassword }) })
+  }
+
+  const testSystemEmail = async (targetEmail: string) => {
+    setTestingEmail(true)
+    try {
+      await api<{ ok: boolean; sentTo: string }>('/api/admin/system-health/test-email', { method: 'POST', body: JSON.stringify({ email: targetEmail }) })
+      notifyAdmin('success', 'E-mail enviado', `Mensagem de teste enviada para ${targetEmail}.`)
+      await load().catch(() => undefined)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Nao foi possivel enviar o e-mail de teste.'
+      notifyAdmin('error', 'Teste SMTP falhou', message)
+      throw new Error(message, { cause: err })
+    } finally {
+      setTestingEmail(false)
+    }
   }
 
   const logout = async () => {
@@ -753,7 +773,9 @@ function Admin() {
           {activeSection === 'access-points' ? <AccessPointsPanel accessPoints={accessPoints} /> : null}
           {activeSection === 'admins' ? <AdminsPanel admin={admin} admins={admins} invitations={adminInvitations} allowedSites={allowedSites} onChanged={load} /> : null}
           {activeSection === 'audit' ? <AuditPanel audit={audit} /> : null}
+          {activeSection === 'portal-sites' ? <PortalSitesPanel sites={sites} allowedSites={allowedSites} selectedSiteId={selectedSiteId} onSelectSite={handleSiteChange} onOpenPortal={() => { setActiveSection('portal'); window.history.pushState(null, '', '/admin/portal') }} onOpenMaintenance={() => { setActiveSection('maintenance'); window.history.pushState(null, '', '/admin/maintenance') }} /> : null}
           {activeSection === 'portal' ? appearance ? <SettingsPanel admin={admin} maintenance={maintenance} appearance={selectedSiteId !== 'ALL' && siteAppearance ? siteAppearance : appearance} allowedSites={allowedSites} selectedSiteId={selectedSiteId} siteAppearance={siteAppearance} notices={notices} saving={appearanceSaving} feedback={appearanceMessage} onChange={(value) => selectedSiteId !== 'ALL' && siteAppearance ? setSiteAppearance({ ...siteAppearance, ...value }) : setAppearance(value)} onSave={saveAppearance} onResetSite={resetSiteAppearance} /> : <AdminRouteState title="Portal público" message="Configurações do portal ainda não carregadas." /> : null}
+          {activeSection === 'health' ? <SystemHealthPanel health={systemHealth} admin={admin} busy={testingEmail} onRefresh={() => void load().catch(() => undefined)} onTestEmail={testSystemEmail} /> : null}
           {activeSection === 'settings' ? <AccountSettingsPanel admin={admin} onRequestPasswordReset={requestPasswordReset} onResetPassword={resetPassword} onToast={notifyAdmin} /> : null}
         </AdminSectionErrorBoundary>
       </section>
@@ -1031,6 +1053,46 @@ function SitesPanel({ sites, compact = false, onOpen }: { sites: SiteNode[]; com
     const content = <><div className="site-node-head"><span className={`topology-dot ${health}`} /><div><strong>{site.name}</strong><small>{site.status || 'Status indisponível'}</small></div></div><div className="site-method-chips" aria-label="Métodos de acesso liberados">{(site.authMethods?.length ? site.authMethods : (["voucher", "cpf", "email"] as Method[])).map((method) => <span key={method}>{methodLabel(method)}</span>)}</div><div className="site-flow" aria-hidden="true"><span>Site</span><i /><span>APs</span><i /><span>Clientes</span><i /><span>Portal</span></div><dl><div><dt>APs</dt><dd>{site.aps}</dd></div><div><dt>Clientes</dt><dd>{site.connectedClients}</dd></div><div><dt>Sessões</dt><dd>{site.sessions}</dd></div></dl></>
     return onOpen && site.siteId ? <button key={site.siteId || site.name} className="site-topology-card clickable" type="button" onClick={() => onOpen(site.siteId || site.name)}>{content}</button> : <article key={site.siteId || site.name} className="site-topology-card">{content}</article>
   })}</div></div> : <div className="site-empty-guidance"><EmptyState message="Nenhum site retornado pela API UniFi para o filtro atual." /><p>Confira a unidade selecionada no topo, a API key do UniFi e se o site existe no UniFi OS. Use Atualizar para tentar novamente depois de corrigir a integracao.</p></div>}</Panel>
+}
+
+function PortalSitesPanel({ sites, allowedSites, selectedSiteId, onSelectSite, onOpenPortal, onOpenMaintenance }: { sites: SiteNode[]; allowedSites: AllowedSite[]; selectedSiteId: string; onSelectSite: (siteId: string) => void; onOpenPortal: () => void; onOpenMaintenance: () => void }) {
+  const rows = (allowedSites.length ? allowedSites : sites.map((site) => ({ siteId: site.siteId || site.name, name: site.name, allowed: true }))).map((allowed) => {
+    const site = sites.find((item) => item.siteId === allowed.siteId || item.name === allowed.name)
+    return { ...allowed, site, authMethods: site?.authMethods?.length ? site.authMethods : (["voucher", "cpf", "email"] as Method[]) }
+  })
+  return <div className="admin-content"><PageHeader title="Portais por unidade" description="Controle de forma rápida quais métodos aparecem para cada portal público." /><section className="portal-sites-grid">{rows.map((row) => {
+    const isSelected = selectedSiteId === row.siteId
+    return <article className={`portal-site-card ${isSelected ? 'selected' : ''}`} key={row.siteId}>
+      <div className="portal-site-card-head"><div><strong>{row.name}</strong><span>{row.site?.status || 'Site configurado'}</span></div>{isSelected ? <b>Selecionado</b> : null}</div>
+      <div className="site-method-chips" aria-label="Métodos visíveis">{row.authMethods.map((method) => <span key={method}>{methodLabel(method)}</span>)}</div>
+      <dl><div><dt>APs</dt><dd>{row.site?.aps ?? 0}</dd></div><div><dt>Clientes</dt><dd>{row.site?.connectedClients ?? 0}</dd></div><div><dt>Sessões</dt><dd>{row.site?.sessions ?? 0}</dd></div></dl>
+      <div className="portal-site-actions"><button className="soft-button" type="button" onClick={() => { onSelectSite(row.siteId); onOpenPortal() }}>Editar métodos</button><button className="soft-button" type="button" onClick={() => { onSelectSite(row.siteId); onOpenMaintenance() }}>Manutenção</button></div>
+    </article>
+  })}</section><Panel title="Como usar" icon={<ShieldCheck />} compact><div className="portal-sites-help"><InfoTile title="Sede" value="Voucher, CPF e e-mail" detail="Selecione Sede no topo, abra Portal público e marque os métodos permitidos." icon={<Ticket />} /><InfoTile title="Esdras" value="Somente voucher" detail="Selecione Esdras, deixe apenas Voucher marcado e salve o visual da unidade." icon={<LockKeyhole />} /><InfoTile title="Segurança" value="Validação no backend" detail="Mesmo que alguém force uma tela escondida, o backend bloqueia método não permitido para o site." icon={<ShieldCheck />} /></div></Panel></div>
+}
+
+function HealthStatusBadge({ value }: { value: string | boolean }) {
+  const ok = value === true || value === 'ok'
+  return <span className={`health-status ${ok ? 'ok' : 'warning'}`}>{ok ? 'OK' : 'Atenção'}</span>
+}
+
+function SystemHealthPanel({ health, admin, busy, onRefresh, onTestEmail }: { health: SystemHealth | null; admin: AdminMe | null; busy: boolean; onRefresh: () => void; onTestEmail: (email: string) => Promise<void> }) {
+  const [targetEmail, setTargetEmail] = useState(admin?.email || '')
+  const [message, setMessage] = useState('')
+  const runEmailTest = async () => {
+    setMessage('')
+    if (!validEmail(targetEmail)) {
+      setMessage('Informe um e-mail válido para o teste.')
+      return
+    }
+    try {
+      await onTestEmail(targetEmail)
+      setMessage('Teste enviado. Confira a caixa de entrada e o spam.')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Teste SMTP falhou.')
+    }
+  }
+  return <div className="admin-content"><PageHeader title="Saúde do sistema" description="Diagnóstico operacional do portal, banco, UniFi, mídia e envio de e-mail." action={<button className="soft-button" type="button" onClick={onRefresh}>Atualizar</button>} />{health ? <section className="health-grid"><Panel title="Banco e schema" icon={<Gauge />} compact><div className="health-stack"><div><span>Banco</span><HealthStatusBadge value={health.database.status} /></div><div><span>Schema</span><HealthStatusBadge value={health.schema.status} /></div><div><span>Revisão Alembic</span><strong>{health.schema.alembicRevision || 'Não informada'}</strong></div>{health.schema.findings.length ? <p className="error">Pendências: {health.schema.findings.join(', ')}</p> : <p className="success">Migrações compatíveis.</p>}</div></Panel><Panel title="UniFi" icon={<Radio />} compact><div className="health-stack"><div><span>Status</span><HealthStatusBadge value={health.unifi.status} /></div><div><span>Sites retornados</span><strong>{health.unifi.sites}</strong></div>{health.unifi.message ? <p className="error">{health.unifi.message}</p> : <p className="success">Integração respondendo.</p>}</div></Panel><Panel title="SMTP" icon={<FileClock />} compact><div className="health-stack"><div><span>Configuração</span><HealthStatusBadge value={health.smtp.configured} /></div><div><span>Servidor</span><strong>{health.smtp.host || 'Não configurado'}:{health.smtp.port}</strong></div><div><span>Remetente</span><strong>{health.smtp.from || 'Não configurado'}</strong></div><label htmlFor="health-email-test">Enviar teste para<input id="health-email-test" value={targetEmail} onChange={(event) => setTargetEmail(event.target.value)} inputMode="email" autoComplete="email" /></label><button className="primary admin-save" type="button" onClick={() => void runEmailTest()} disabled={busy || !health.smtp.configured}>{busy ? 'Enviando...' : 'Testar e-mail'}</button>{message ? <p className={message.includes('falhou') || message.includes('Informe') ? 'error' : 'success'} role="status">{message}</p> : null}</div></Panel><Panel title="Runtime" icon={<Settings />} compact><div className="health-stack"><div><span>Ambiente</span><strong>{health.runtime.environment}</strong></div><div><span>MFA admin por e-mail</span><HealthStatusBadge value={health.runtime.adminEmailMfaRequired} /></div><div><span>Mídia pública</span><strong>{health.runtime.mediaPublicBaseUrl}</strong></div><div><span>Portal público</span><strong>{health.runtime.publicBaseUrl}</strong></div><div><span>Painel admin</span><strong>{health.runtime.adminBaseUrl}</strong></div></div></Panel></section> : <Panel title="Saúde indisponível" icon={<AlertTriangle />}><EmptyState message="Ainda não foi possível carregar o diagnóstico operacional." /></Panel>}</div>
 }
 
 function SiteDetailPanel({ siteId, sites, visitors, sessions, accessPoints, vouchers, notices, maintenance, onBack, onOpenSection }: { siteId: string; sites: SiteNode[]; visitors: ClientRow[]; sessions: GuestSessionRow[]; accessPoints: AccessPoint[]; vouchers: Voucher[]; notices: AdminNotice[]; maintenance: MaintenanceAdmin | null; onBack: () => void; onOpenSection: (section: AdminSection) => void }) {
