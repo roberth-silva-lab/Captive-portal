@@ -6,13 +6,15 @@ from app.core.config import get_settings
 
 
 class EmailDeliveryError(Exception):
-    pass
+    def __init__(self, message: str, reason: str = "smtp_error"):
+        super().__init__(message)
+        self.reason = reason
 
 
 def send_email(to_email: str, subject: str, text: str, html_body: str | None = None) -> None:
     settings = get_settings()
     if not settings.smtp_host:
-        raise EmailDeliveryError("SMTP_HOST is not configured.")
+        raise EmailDeliveryError("SMTP_HOST is not configured.", "smtp_not_configured")
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = settings.smtp_from
@@ -25,8 +27,18 @@ def send_email(to_email: str, subject: str, text: str, html_body: str | None = N
             smtp.starttls()
             smtp.login(settings.smtp_user, settings.smtp_password)
             smtp.send_message(msg)
-    except Exception as exc:  # noqa: BLE001
-        raise EmailDeliveryError("Could not deliver email.") from exc
+    except smtplib.SMTPAuthenticationError as exc:
+        raise EmailDeliveryError("Could not authenticate with SMTP server.", "smtp_auth_failed") from exc
+    except smtplib.SMTPConnectError as exc:
+        raise EmailDeliveryError("Could not connect to SMTP server.", "smtp_connect_failed") from exc
+    except (smtplib.SMTPServerDisconnected, smtplib.SMTPHeloError) as exc:
+        raise EmailDeliveryError("SMTP server disconnected.", "smtp_disconnected") from exc
+    except TimeoutError as exc:
+        raise EmailDeliveryError("SMTP request timed out.", "smtp_timeout") from exc
+    except smtplib.SMTPException as exc:
+        raise EmailDeliveryError("Could not deliver email.", "smtp_delivery_failed") from exc
+    except OSError as exc:
+        raise EmailDeliveryError("Could not reach SMTP server.", "smtp_network_error") from exc
 
 
 def wifi_code_email(code: str, ttl_minutes: int) -> tuple[str, str]:

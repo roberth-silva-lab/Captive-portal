@@ -343,8 +343,9 @@ async def request_email_code(payload: EmailCodeRequest, request: Request, db: Se
         send_email(payload.email, "Seu código de confirmação", text_body, html_body)
     except EmailDeliveryError as exc:
         db.rollback()
-        record_attempt(db, payload.clientMac, ip, "email", False, "smtp_error")
-        logger.warning("Public email code delivery failed", extra={"reason": "smtp_error"})
+        reason = getattr(exc, "reason", "smtp_error")
+        record_attempt(db, payload.clientMac, ip, "email", False, reason)
+        logger.warning("Public email code delivery failed", extra={"reason": reason})
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Não foi possível enviar o código por e-mail agora. Tente novamente em instantes.") from exc
     db.commit()
     record_attempt(db, payload.clientMac, ip, "email", True)
