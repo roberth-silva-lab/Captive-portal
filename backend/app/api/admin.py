@@ -635,7 +635,7 @@ async def system_health(_admin: AdminUser = Depends(require_role(AdminRole.VIEWE
         unifi_status = "degraded"
         unifi_error = "UniFi indisponivel."
 
-    smtp_configured = bool(settings.smtp_host and settings.smtp_user and settings.smtp_password)
+    smtp_configured = bool(settings.smtp_host and settings.smtp_from)
     status_value = "ok" if database_status == "ok" and schema_status == "ok" and unifi_status == "ok" and smtp_configured else "degraded"
     return {
         "status": status_value,

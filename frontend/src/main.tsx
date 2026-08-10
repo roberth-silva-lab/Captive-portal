@@ -52,6 +52,7 @@ import type {
   MediaAsset,
   Method,
   PortalAppearance,
+  PortalEditorTab,
   PortalSettings,
   PortalSiteAppearance,
   PreviewDevice,
@@ -461,6 +462,7 @@ function Admin() {
   const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null)
   const [authAttempts, setAuthAttempts] = useState<AuthAttemptRow[]>([])
   const [testingEmail, setTestingEmail] = useState(false)
+  const [portalEditorTab, setPortalEditorTab] = useState<PortalEditorTab>('visual')
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all')
   const [loadStatus, setLoadStatus] = useState<'loading' | 'ready' | 'unauthenticated' | 'forbidden' | 'error'>('loading')
   const [error, setError] = useState('')
@@ -762,7 +764,7 @@ function Admin() {
   return (
     <main className="admin-app">
       <AdminToastStack toasts={adminToasts} onDismiss={dismissAdminToast} />
-      <AdminSidebar active={activeSection} open={menuOpen} onClose={() => setMenuOpen(false)} onSelect={(section) => { setActiveSection(section); setMenuOpen(false); if (section !== 'site-detail') window.history.pushState(null, '', section === 'sites' ? '/admin/sites' : `/admin/${section}`) }} />
+      <AdminSidebar active={activeSection} open={menuOpen} onClose={() => setMenuOpen(false)} onSelect={(section) => { if (section === 'portal') setPortalEditorTab('visual'); setActiveSection(section); setMenuOpen(false); if (section !== 'site-detail') window.history.pushState(null, '', section === 'sites' ? '/admin/sites' : `/admin/${section}`) }} />
       <section className="admin-main" aria-label="Conteudo administrativo">
         <AdminHeader admin={admin} maintenance={maintenance} refreshing={refreshing} lastUpdatedAt={lastUpdatedAt} refreshError={refreshError} allowedSites={allowedSites} selectedSiteId={selectedSiteId} onSiteChange={handleSiteChange} onRefresh={() => void load().catch(() => undefined)} onLogout={logout} onMenu={() => setMenuOpen(true)} />
         <AdminSectionErrorBoundary section={activeSection}>
@@ -777,8 +779,8 @@ function Admin() {
           {activeSection === 'access-points' ? <AccessPointsPanel accessPoints={accessPoints} /> : null}
           {activeSection === 'admins' ? <AdminsPanel admin={admin} admins={admins} invitations={adminInvitations} allowedSites={allowedSites} onChanged={load} /> : null}
           {activeSection === 'audit' ? <AuditPanel audit={audit} /> : null}
-          {activeSection === 'portal-sites' ? <PortalSitesPanel sites={sites} allowedSites={allowedSites} selectedSiteId={selectedSiteId} onSelectSite={handleSiteChange} onOpenPortal={() => { setActiveSection('portal'); window.history.pushState(null, '', '/admin/portal') }} onOpenMaintenance={() => { setActiveSection('maintenance'); window.history.pushState(null, '', '/admin/maintenance') }} /> : null}
-          {activeSection === 'portal' ? appearance ? <SettingsPanel admin={admin} maintenance={maintenance} appearance={selectedSiteId !== 'ALL' && siteAppearance ? siteAppearance : appearance} allowedSites={allowedSites} selectedSiteId={selectedSiteId} siteAppearance={siteAppearance} notices={notices} saving={appearanceSaving} feedback={appearanceMessage} onChange={(value) => selectedSiteId !== 'ALL' && siteAppearance ? setSiteAppearance({ ...siteAppearance, ...value }) : setAppearance(value)} onSave={saveAppearance} onResetSite={resetSiteAppearance} /> : <AdminRouteState title="Portal público" message="Configurações do portal ainda não carregadas." /> : null}
+          {activeSection === 'portal-sites' ? <PortalSitesPanel sites={sites} allowedSites={allowedSites} selectedSiteId={selectedSiteId} onSelectSite={handleSiteChange} onOpenPortal={(tab = 'visual') => { setPortalEditorTab(tab); setActiveSection('portal'); window.history.pushState(null, '', '/admin/portal') }} onOpenMaintenance={() => { setActiveSection('maintenance'); window.history.pushState(null, '', '/admin/maintenance') }} /> : null}
+          {activeSection === 'portal' ? appearance ? <SettingsPanel admin={admin} maintenance={maintenance} appearance={selectedSiteId !== 'ALL' && siteAppearance ? siteAppearance : appearance} allowedSites={allowedSites} selectedSiteId={selectedSiteId} siteAppearance={siteAppearance} notices={notices} activeTab={portalEditorTab} saving={appearanceSaving} feedback={appearanceMessage} onTabChange={setPortalEditorTab} onChange={(value) => selectedSiteId !== 'ALL' && siteAppearance ? setSiteAppearance({ ...siteAppearance, ...value }) : setAppearance(value)} onSave={saveAppearance} onResetSite={resetSiteAppearance} /> : <AdminRouteState title="Portal público" message="Configurações do portal ainda não carregadas." /> : null}
           {activeSection === 'health' ? <SystemHealthPanel health={systemHealth} attempts={authAttempts} admin={admin} busy={testingEmail} onRefresh={() => void load().catch(() => undefined)} onTestEmail={testSystemEmail} /> : null}
           {activeSection === 'settings' ? <AccountSettingsPanel admin={admin} onRequestPasswordReset={requestPasswordReset} onResetPassword={resetPassword} onToast={notifyAdmin} /> : null}
         </AdminSectionErrorBoundary>
@@ -1059,7 +1061,7 @@ function SitesPanel({ sites, compact = false, onOpen }: { sites: SiteNode[]; com
   })}</div></div> : <div className="site-empty-guidance"><EmptyState message="Nenhum site retornado pela API UniFi para o filtro atual." /><p>Confira a unidade selecionada no topo, a API key do UniFi e se o site existe no UniFi OS. Use Atualizar para tentar novamente depois de corrigir a integração.</p></div>}</Panel>
 }
 
-function PortalSitesPanel({ sites, allowedSites, selectedSiteId, onSelectSite, onOpenPortal, onOpenMaintenance }: { sites: SiteNode[]; allowedSites: AllowedSite[]; selectedSiteId: string; onSelectSite: (siteId: string) => void; onOpenPortal: () => void; onOpenMaintenance: () => void }) {
+function PortalSitesPanel({ sites, allowedSites, selectedSiteId, onSelectSite, onOpenPortal, onOpenMaintenance }: { sites: SiteNode[]; allowedSites: AllowedSite[]; selectedSiteId: string; onSelectSite: (siteId: string) => void; onOpenPortal: (tab?: PortalEditorTab) => void; onOpenMaintenance: () => void }) {
   const rows = (allowedSites.length ? allowedSites : sites.map((site) => ({ siteId: site.siteId || site.name, name: site.name, allowed: true }))).map((allowed) => {
     const site = sites.find((item) => item.siteId === allowed.siteId || item.name === allowed.name)
     return { ...allowed, site, authMethods: site?.authMethods?.length ? site.authMethods : (["voucher", "cpf", "email"] as Method[]) }
@@ -1070,7 +1072,7 @@ function PortalSitesPanel({ sites, allowedSites, selectedSiteId, onSelectSite, o
       <div className="portal-site-card-head"><div><strong>{row.name}</strong><span>{row.site?.status || 'Site configurado'}</span></div>{isSelected ? <b>Selecionado</b> : null}</div>
       <div className="site-method-chips" aria-label="Métodos visíveis">{row.authMethods.map((method) => <span key={method}>{methodLabel(method)}</span>)}</div>
       <dl><div><dt>APs</dt><dd>{row.site?.aps ?? 0}</dd></div><div><dt>Clientes</dt><dd>{row.site?.connectedClients ?? 0}</dd></div><div><dt>Sessões</dt><dd>{row.site?.sessions ?? 0}</dd></div></dl>
-      <div className="portal-site-actions"><button className="soft-button" type="button" onClick={() => { onSelectSite(row.siteId); onOpenPortal() }}>Editar métodos</button><button className="soft-button" type="button" onClick={() => { onSelectSite(row.siteId); onOpenMaintenance() }}>Manutenção</button></div>
+      <div className="portal-site-actions"><button className="soft-button" type="button" onClick={() => { onSelectSite(row.siteId); onOpenPortal('methods') }}>Editar métodos</button><button className="soft-button" type="button" onClick={() => { onSelectSite(row.siteId); onOpenMaintenance() }}>Manutenção</button></div>
     </article>
   })}</section><Panel title="Como usar" icon={<ShieldCheck />} compact><div className="portal-sites-help"><InfoTile title="Sede" value="Voucher, CPF e e-mail" detail="Selecione Sede no topo, abra Portal público e marque os métodos permitidos." icon={<Ticket />} /><InfoTile title="Esdras" value="Somente voucher" detail="Selecione Esdras, deixe apenas Voucher marcado e salve o visual da unidade." icon={<LockKeyhole />} /><InfoTile title="Segurança" value="Validação no backend" detail="Mesmo que alguém force uma tela escondida, o backend bloqueia método não permitido para o site." icon={<ShieldCheck />} /></div></Panel></div>
 }
@@ -1383,10 +1385,9 @@ function AccountSettingsPanel({ admin, onRequestPasswordReset, onResetPassword, 
   }
   return <div className="admin-content"><PageHeader title="Configurações" description="Conta administrativa, segurança de acesso e preferências do painel." /><section className="account-settings-grid"><Panel title="Minha conta" icon={<UserRound />}><div className="account-summary"><div><span>Nome</span><strong>{admin?.name || 'Administrador'}</strong></div><div><span>E-mail</span><strong>{admin?.email || 'Não informado'}</strong></div><div><span>Perfil</span><strong>{admin?.role || 'ADMIN'}</strong></div><div><span>Escopo</span><strong>{admin?.canSelectAllSites ? 'Todos os sites' : admin?.siteIds?.length ? `${admin.siteIds.length} unidade(s)` : 'Sem unidade atribuída'}</strong></div></div></Panel><Panel title="Segurança da conta" icon={<LockKeyhole />}><div className="security-stack"><InfoTile title="Sessão administrativa" value="HttpOnly" detail="O token de sessão não fica disponível para JavaScript." icon={<ShieldCheck />} /><InfoTile title="CSRF" value="Ativo" detail="Ações administrativas usam validação de origem e cookie CSRF." icon={<LockKeyhole />} /><InfoTile title="Código por e-mail" value="Produção" detail="Em produção, o login exige código de 6 dígitos por e-mail antes de criar a sessão." icon={<FileClock />} /></div></Panel><Panel title="Alterar senha" icon={<Settings />}><div className="panel-form account-password-form"><p className="panel-note">Para trocar a senha, solicite um código no e-mail administrativo e defina uma nova senha forte.</p><button className="soft-button" type="button" onClick={() => void requestCode()} disabled={busy || !admin?.email}>{busy ? 'Enviando...' : 'Enviar código para meu e-mail'}</button><label htmlFor="account-reset-code">Código recebido<input id="account-reset-code" value={code} onChange={(event) => setCode(onlyDigits(event.target.value).slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" maxLength={6} /></label><label htmlFor="account-new-password">Nova senha<input id="account-new-password" value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="new-password" minLength={12} /></label><label htmlFor="account-confirm-password">Confirmar senha<input id="account-confirm-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" autoComplete="new-password" minLength={12} /></label><button className="primary admin-save" type="button" onClick={() => void savePassword()} disabled={busy || code.length !== 6 || password.length < 12 || password !== confirmPassword}>{busy ? 'Salvando...' : 'Alterar senha'}</button>{message ? <p className={tone === 'success' ? 'success' : tone === 'error' ? 'error' : 'panel-note'} role="status">{message}</p> : null}</div></Panel></section></div>
 }
-function SettingsPanel({ admin, maintenance, appearance, allowedSites, selectedSiteId, siteAppearance, notices, saving, feedback, onChange, onSave, onResetSite }: { admin: AdminMe | null; maintenance: MaintenanceAdmin | null; appearance: PortalAppearance; allowedSites: AllowedSite[]; selectedSiteId: string; siteAppearance: PortalSiteAppearance | null; notices: AdminNotice[]; saving: boolean; feedback: string; onChange: (value: PortalAppearance) => void; onSave: () => void; onResetSite: () => void }) {
+function SettingsPanel({ admin, maintenance, appearance, allowedSites, selectedSiteId, siteAppearance, notices, activeTab, saving, feedback, onTabChange, onChange, onSave, onResetSite }: { admin: AdminMe | null; maintenance: MaintenanceAdmin | null; appearance: PortalAppearance; allowedSites: AllowedSite[]; selectedSiteId: string; siteAppearance: PortalSiteAppearance | null; notices: AdminNotice[]; activeTab: PortalEditorTab; saving: boolean; feedback: string; onTabChange: (value: PortalEditorTab) => void; onChange: (value: PortalAppearance) => void; onSave: () => void; onResetSite: () => void }) {
   const [device, setDevice] = useState<PreviewDevice>('mobile')
   const [previewState, setPreviewState] = useState<PreviewState>('initial')
-  const [editorTab, setEditorTab] = useState<'visual' | 'methods' | 'terms' | 'preview'>('visual')
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const selectedSite = allowedSites.find((site) => site.siteId === selectedSiteId)
   const scopeLabel = selectedSiteId === 'ALL' ? 'Configuração global' : selectedSite?.name || siteAppearance?.siteName || selectedSiteId
@@ -1412,7 +1413,7 @@ function SettingsPanel({ admin, maintenance, appearance, allowedSites, selectedS
     { id: 'maintenance', label: 'Manutenção' },
     { id: 'notice', label: 'Aviso' },
   ]
-  const tabs: Array<{ id: typeof editorTab; label: string }> = [
+  const tabs: Array<{ id: PortalEditorTab; label: string }> = [
     { id: 'visual', label: 'Visual' },
     { id: 'methods', label: 'Métodos' },
     { id: 'terms', label: 'Termos' },
@@ -1431,13 +1432,13 @@ function SettingsPanel({ admin, maintenance, appearance, allowedSites, selectedS
         <span>{selectedSiteId === 'ALL' ? 'Use a base global para o padrão institucional. Para regras como somente voucher em Esdras, selecione a unidade no topo antes de salvar.' : 'Tudo que for salvo aqui vale apenas para esta unidade, incluindo logo, textos e métodos de acesso.'}</span>
       </div>
       <div className="portal-editor-tabs" role="tablist" aria-label="Etapas do editor do portal">
-        {tabs.map((tab) => <button key={tab.id} className={editorTab === tab.id ? 'active' : ''} type="button" onClick={() => setEditorTab(tab.id)}>{tab.label}</button>)}
+        {tabs.map((tab) => <button key={tab.id} className={activeTab === tab.id ? 'active' : ''} type="button" onClick={() => onTabChange(tab.id)}>{tab.label}</button>)}
       </div>
-      <section className={`settings-layout visual-editor-layout ${editorTab === 'preview' ? 'preview-only' : ''}`}>
-        {editorTab !== 'preview' ? <Panel title={`${tabs.find((tab) => tab.id === editorTab)?.label || 'Editor'} · ${scopeLabel}`} icon={<Settings />}>
+      <section className={`settings-layout visual-editor-layout ${activeTab === 'preview' ? 'preview-only' : ''}`}>
+        {activeTab !== 'preview' ? <Panel title={`${tabs.find((tab) => tab.id === activeTab)?.label || 'Editor'} · ${scopeLabel}`} icon={<Settings />}>
           <div className="panel-form settings-form">
             {selectedSiteId !== 'ALL' ? <p className="scope-note wide">Este override vale somente para {scopeLabel}. Campos vazios usam o visual global como fallback no portal público.</p> : <p className="scope-note wide">Você está editando a base institucional usada por todos os sites sem override específico.</p>}
-            {editorTab === 'visual' ? <>
+            {activeTab === 'visual' ? <>
               <label htmlFor="appearance-network">Nome da rede<input id="appearance-network" value={appearance.networkName} onChange={(event) => onChange({ ...appearance, networkName: event.target.value })} /></label>
               <label htmlFor="appearance-establishment">Nome exibido<input id="appearance-establishment" value={appearance.establishmentName} onChange={(event) => onChange({ ...appearance, establishmentName: event.target.value })} /></label>
               <label htmlFor="appearance-logo">URL do logo<input id="appearance-logo" value={appearance.logoUrl} onChange={(event) => onChange({ ...appearance, logoUrl: event.target.value })} placeholder="https://..." /></label>
@@ -1448,8 +1449,8 @@ function SettingsPanel({ admin, maintenance, appearance, allowedSites, selectedS
               <label htmlFor="appearance-success">Mensagem de sucesso<textarea id="appearance-success" value={appearance.successMessage} onChange={(event) => onChange({ ...appearance, successMessage: event.target.value })} rows={3} /></label>
               <label htmlFor="appearance-expired">Mensagem de reautenticação<textarea id="appearance-expired" value={appearance.expiredMessage} onChange={(event) => onChange({ ...appearance, expiredMessage: event.target.value })} rows={3} /></label>
             </> : null}
-            {editorTab === 'methods' ? <fieldset className="auth-method-checks method-policy-card wide"><legend>Formas de acesso por unidade</legend><p>Marque apenas os métodos que podem aparecer no portal público deste site. A regra também é validada no backend.</p><div className="method-policy-grid">{(["voucher", "cpf", "email"] as Method[]).map((item) => { const checked = methods.includes(item); const next = checked ? methods.filter((method) => method !== item) : [...methods, item]; const [title, detail] = methodCopy(item); return <label className={checked ? "method-policy-option active" : "method-policy-option"} key={item}><input type="checkbox" checked={checked} disabled={checked && methods.length === 1} onChange={() => onChange({ ...appearance, authMethods: next.length ? next : [item] })} /><span><strong>{title}</strong><small>{detail}</small></span></label> })}</div><small className="policy-safe-note">Para Esdras, deixe somente Voucher. Para Sede, marque Voucher, CPF e E-mail.</small></fieldset> : null}
-            {editorTab === 'terms' ? <label className="wide" htmlFor="appearance-terms">Termos de uso<textarea id="appearance-terms" value={appearance.termsText} onChange={(event) => onChange({ ...appearance, termsText: event.target.value })} rows={16} /></label> : null}
+            {activeTab === 'methods' ? <fieldset className="auth-method-checks method-policy-card wide"><legend>Formas de acesso por unidade</legend><p>Marque apenas os métodos que podem aparecer no portal público deste site. A regra também é validada no backend.</p><div className="method-policy-grid">{(["voucher", "cpf", "email"] as Method[]).map((item) => { const checked = methods.includes(item); const next = checked ? methods.filter((method) => method !== item) : [...methods, item]; const [title, detail] = methodCopy(item); return <label className={checked ? "method-policy-option active" : "method-policy-option"} key={item}><input type="checkbox" checked={checked} disabled={checked && methods.length === 1} onChange={() => onChange({ ...appearance, authMethods: next.length ? next : [item] })} /><span><strong>{title}</strong><small>{detail}</small></span></label> })}</div><small className="policy-safe-note">Para Esdras, deixe somente Voucher. Para Sede, marque Voucher, CPF e E-mail.</small></fieldset> : null}
+            {activeTab === 'terms' ? <label className="wide" htmlFor="appearance-terms">Termos de uso<textarea id="appearance-terms" value={appearance.termsText} onChange={(event) => onChange({ ...appearance, termsText: event.target.value })} rows={16} /></label> : null}
             <div className="settings-actions wide"><button className="primary admin-save" type="button" onClick={onSave} disabled={saving}>{saving ? 'Salvando...' : selectedSiteId === 'ALL' ? 'Salvar visual global' : 'Salvar visual da unidade'}</button>{selectedSiteId !== 'ALL' && siteAppearance?.hasOverride ? <button className="soft-button" type="button" onClick={onResetSite} disabled={saving}>Voltar ao visual global</button> : null}</div>
             {feedback ? <p className={feedback.includes('sucesso') ? 'success' : 'error'} role="status">{feedback}</p> : null}
           </div>

@@ -39,5 +39,6 @@ export type AdminSection = 'dashboard' | 'sessions' | 'visitors' | 'vouchers' | 
 export type SessionFilter = 'all' | 'online' | 'expiring-30' | 'expiring-10' | 'ended-today'
 export type PreviewDevice = 'mobile' | 'tablet' | 'desktop'
 export type PreviewState = 'initial' | 'voucher' | 'cpf' | 'email' | 'code-sent' | 'released' | 'maintenance' | 'notice'
+export type PortalEditorTab = 'visual' | 'methods' | 'terms' | 'preview'
 
 export type MediaAsset = { id: string; assetType: string; originalFilename: string; contentType: string; byteSize: number; width: number; height: number; publicUrl: string; createdAt: string }

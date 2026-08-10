@@ -1,5 +1,6 @@
 import html
 import smtplib
+from collections.abc import Callable
 from email.message import EmailMessage
 
 from app.core.config import get_settings
@@ -15,6 +16,8 @@ def send_email(to_email: str, subject: str, text: str, html_body: str | None = N
     settings = get_settings()
     if not settings.smtp_host:
         raise EmailDeliveryError("SMTP_HOST is not configured.", "smtp_not_configured")
+    if not settings.smtp_from:
+        raise EmailDeliveryError("SMTP_FROM is not configured.", "smtp_from_not_configured")
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = settings.smtp_from
@@ -23,9 +26,17 @@ def send_email(to_email: str, subject: str, text: str, html_body: str | None = N
     if html_body:
         msg.add_alternative(html_body, subtype="html", charset="utf-8")
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=settings.smtp_timeout_seconds) as smtp:
-            smtp.starttls()
-            smtp.login(settings.smtp_user, settings.smtp_password)
+        smtp_factory: Callable[..., smtplib.SMTP] = smtplib.SMTP_SSL if settings.smtp_port == 465 else smtplib.SMTP
+        with smtp_factory(settings.smtp_host, settings.smtp_port, timeout=settings.smtp_timeout_seconds) as smtp:
+            if settings.smtp_port != 465:
+                smtp.ehlo()
+                if settings.smtp_port != 25:
+                    smtp.starttls()
+                    smtp.ehlo()
+            if settings.smtp_user or settings.smtp_password:
+                if not settings.smtp_user or not settings.smtp_password:
+                    raise EmailDeliveryError("SMTP credentials are incomplete.", "smtp_credentials_incomplete")
+                smtp.login(settings.smtp_user, settings.smtp_password)
             smtp.send_message(msg)
     except smtplib.SMTPAuthenticationError as exc:
         raise EmailDeliveryError("Could not authenticate with SMTP server.", "smtp_auth_failed") from exc
