@@ -1,7 +1,10 @@
+from datetime import timedelta
+
 import pytest
 
 from app.integrations.unifi.client import UniFiClientContext, UniFiClientRecord
-from app.models import Voucher
+from app.models import MaintenanceConfig, Voucher
+from app.models.entities import utcnow
 from app.security.tokens import secret_hash
 
 
@@ -174,6 +177,32 @@ def test_settings_returns_site_allowed_auth_methods(client, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["allowedAuthMethods"] == ["voucher"]
+
+
+@pytest.mark.asyncio
+async def test_site_maintenance_does_not_block_voucher_auth_for_other_site(client, monkeypatch):
+    from app.core.database import SessionLocal
+
+    mock_unifi_context(monkeypatch, site_id="site-sede", site_name="Sede")
+    db = SessionLocal()
+    db.add(
+        MaintenanceConfig(
+            id="site-esdras",
+            enabled=True,
+            title="Manutencao em Esdras",
+            message="Esdras temporariamente indisponivel.",
+            start_at=utcnow() - timedelta(minutes=5),
+            end_at=utcnow() + timedelta(hours=1),
+        )
+    )
+    db.add(Voucher(code_hash=secret_hash("SEDE123"), code_label="SEDE***", duration_minutes=30, device_limit=1, site="Sede", site_id="site-sede", site_name_snapshot="Sede"))
+    db.commit()
+    db.close()
+
+    response = client.post("/api/auth/voucher", json={"clientMac": "AA:BB:CC:DD:EE:12", "code": "SEDE123", "termsAccepted": True})
+
+    assert response.status_code == 200
+    assert response.json()["authorized"] is True
 
 
 @pytest.mark.asyncio

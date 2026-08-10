@@ -1,7 +1,7 @@
 import json
 import secrets
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Cookie, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import func, or_, select
@@ -74,6 +74,7 @@ from app.schemas.admin import (
     VoucherBatchCreateResponse,
     VoucherCreateRequest,
     VoucherResponse,
+    VoucherUpdateRequest,
 )
 from app.security.passwords import hash_password, verify_password
 from app.security.pii import decrypt_text
@@ -435,6 +436,15 @@ def _notification_out(row: PortalNotification) -> NotificationAdminResponse:
     return NotificationAdminResponse(id=row.id, type=row.type, title=row.title, message=row.message, startsAt=row.starts_at, endsAt=row.ends_at, site=row.site, enabled=row.enabled, createdAt=row.created_at, updatedAt=row.updated_at)
 
 
+def _voucher_site_payload(db: Session, admin: AdminUser, site_id: str | None, site_name: str) -> tuple[str, str]:
+    requested = (site_id or site_name or "").strip()
+    if requested.upper() == "ALL":
+        if admin.role != AdminRole.SUPERADMIN:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Apenas SUPERADMIN pode criar voucher valido para todos os sites.")
+        return "ALL", "ALL"
+    selected_site = ensure_site_access(db, admin, site_id or site_name)
+    return selected_site or site_name, site_name
+
 def _voucher_out(voucher: Voucher) -> VoucherResponse:
     return VoucherResponse(
         id=voucher.id,
@@ -663,8 +673,7 @@ async def sites(siteId: str | None = None, db: Session = Depends(get_db), admin:
 
 @router.post("/vouchers", response_model=VoucherBatchCreateResponse, dependencies=[Depends(require_csrf)])
 def create_vouchers(payload: VoucherCreateRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
-    selected_site = ensure_site_access(db, admin, payload.siteId or payload.site)
-    site_name = payload.site
+    selected_site, site_name = _voucher_site_payload(db, admin, payload.siteId, payload.site)
     max_devices = payload.maxDevices or payload.deviceLimit
     created = []
     for _ in range(payload.quantity):
@@ -686,7 +695,7 @@ def create_vouchers(payload: VoucherCreateRequest, db: Session = Depends(get_db)
             max_devices=max_devices,
             site=site_name,
             site_id=selected_site,
-            site_name_snapshot=site_name,
+            site_name_snapshot="Todos os sites" if selected_site == "ALL" else site_name,
             expires_at=payload.expiresAt,
             is_active=payload.enabled,
             created_by=admin.id,
@@ -704,16 +713,51 @@ def list_vouchers(siteId: str | None = None, db: Session = Depends(get_db), admi
     selected_sites = visible_site_filter(db, admin, siteId)
     query = select(Voucher).order_by(Voucher.created_at.desc())
     if selected_sites is not None:
-        query = query.where(or_(Voucher.site_id.in_(selected_sites), Voucher.site.in_(selected_sites)))
+        query = query.where(or_(Voucher.site_id.in_(selected_sites), Voucher.site.in_(selected_sites), Voucher.site_id == "ALL", Voucher.site == "ALL"))
     rows = db.scalars(query).all()
     return [_voucher_out(v) for v in rows]
 
+
+@router.put("/vouchers/{voucher_id}", response_model=VoucherResponse, dependencies=[Depends(require_csrf)])
+def update_voucher(voucher_id: str, payload: VoucherUpdateRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+    voucher = db.get(Voucher, voucher_id)
+    if not voucher:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Voucher nao encontrado.")
+    if (voucher.site_id or voucher.site) == "ALL":
+        if admin.role != AdminRole.SUPERADMIN:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso ao site nao permitido.")
+    else:
+        ensure_site_access(db, admin, voucher.site_id or voucher.site)
+    if voucher.revoked_at and payload.enabled:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Voucher revogado nao pode ser reativado.")
+    selected_site, site_name = _voucher_site_payload(db, admin, payload.siteId, payload.site)
+    voucher.description = payload.description
+    voucher.duration_minutes = payload.durationMinutes
+    voucher.time_limit_minutes = payload.timeLimitMinutes
+    voucher.data_limit_mb = payload.dataLimitMb
+    voucher.download_limit = payload.downloadLimit
+    voucher.upload_limit = payload.uploadLimit
+    voucher.device_limit = payload.deviceLimit
+    voucher.max_devices = payload.maxDevices or payload.deviceLimit
+    voucher.site = site_name
+    voucher.site_id = selected_site
+    voucher.site_name_snapshot = "Todos os sites" if selected_site == "ALL" else site_name
+    voucher.expires_at = payload.expiresAt
+    voucher.is_active = payload.enabled and voucher.revoked_at is None
+    audit(db, admin, "voucher.updated", "voucher", voucher.id, {"siteId": selected_site, "siteName": site_name})
+    db.commit()
+    db.refresh(voucher)
+    return _voucher_out(voucher)
 
 @router.post("/vouchers/{voucher_id}/revoke", response_model=VoucherResponse, dependencies=[Depends(require_csrf)])
 def revoke_voucher(voucher_id: str, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
     voucher = db.get(Voucher, voucher_id)
     if voucher:
-        ensure_site_access(db, admin, voucher.site_id or voucher.site)
+        if (voucher.site_id or voucher.site) == "ALL":
+            if admin.role != AdminRole.SUPERADMIN:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso ao site nao permitido.")
+        else:
+            ensure_site_access(db, admin, voucher.site_id or voucher.site)
     if not voucher:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Voucher não encontrado.")
     if voucher.revoked_at:
@@ -1328,13 +1372,13 @@ def dashboard_charts(siteId: str | None = None, db: Session = Depends(get_db), a
             longest.append({"sessionId": session.id, "label": label, "site": session.site, "method": method, "durationSeconds": duration})
 
     connections_by_day = [{"date": day, "label": day[5:], "count": count} for day, count in days.items()]
-    ranked_days = sorted(connections_by_day, key=lambda item: item["count"], reverse=True)
-    quiet_days = sorted(connections_by_day, key=lambda item: (item["count"], item["date"]))
+    ranked_days = sorted(connections_by_day, key=lambda item: cast(int, item["count"]), reverse=True)
+    quiet_days = sorted(connections_by_day, key=lambda item: (cast(int, item["count"]), cast(str, item["date"])))
     return {
         "connectionsByDay": connections_by_day,
         "bestDays": ranked_days[:5],
         "quietDays": quiet_days[:5],
         "authMethods": [{"method": method.lower(), "count": count} for method, count in method_counts.items() if count > 0],
-        "longestSessions": sorted(longest, key=lambda item: item["durationSeconds"], reverse=True)[:5],
+        "longestSessions": sorted(longest, key=lambda item: cast(int, item["durationSeconds"]), reverse=True)[:5],
         "periodDays": 30,
     }

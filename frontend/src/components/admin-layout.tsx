@@ -10,6 +10,7 @@ import {
   MonitorCheck,
   Palette,
   Radio,
+  RefreshCw,
   Settings,
   Ticket,
   UserCog,
@@ -66,7 +67,7 @@ export function AdminSidebar({ active, open, onClose, onSelect }: { active: Admi
   )
 }
 
-export function AdminHeader({ admin, maintenance, refreshing, lastUpdatedAt, refreshError, allowedSites, selectedSiteId, onSiteChange, onLogout, onMenu }: { admin: AdminMe | null; maintenance: MaintenanceAdmin | null; refreshing: boolean; lastUpdatedAt: Date | null; refreshError: string; allowedSites: AllowedSite[]; selectedSiteId: string; onSiteChange: (siteId: string) => void; onLogout: () => void; onMenu: () => void }) {
+export function AdminHeader({ admin, maintenance, refreshing, lastUpdatedAt, refreshError, allowedSites, selectedSiteId, onSiteChange, onRefresh, onLogout, onMenu }: { admin: AdminMe | null; maintenance: MaintenanceAdmin | null; refreshing: boolean; lastUpdatedAt: Date | null; refreshError: string; allowedSites: AllowedSite[]; selectedSiteId: string; onSiteChange: (siteId: string) => void; onRefresh: () => void; onLogout: () => void; onMenu: () => void }) {
   const isMaintenance = maintenance?.maintenanceActive
   const canUseAll = Boolean(admin?.canSelectAllSites || (admin?.siteIds?.length ?? 0) > 1)
   return (
@@ -84,6 +85,7 @@ export function AdminHeader({ admin, maintenance, refreshing, lastUpdatedAt, ref
         </label>
         <span className={`status-pill ${isMaintenance ? 'warning' : 'ok'}`}><span />{isMaintenance ? 'Manutenção' : 'Operacional'}</span>
         <span className={`live-pill ${refreshError ? 'warning' : 'ok'}`} title={refreshError || undefined}><span />{refreshing ? 'Atualizando...' : refreshError ? `Falha na atualização: ${secondsAgo(lastUpdatedAt)}` : `Ao vivo · ${secondsAgo(lastUpdatedAt)}`}</span>
+        <button className="refresh-button" type="button" onClick={onRefresh} disabled={refreshing} aria-label="Atualizar dados agora"><RefreshCw /> Atualizar</button>
         <div className="admin-user" aria-label="Administrador autenticado"><strong>{admin?.name ?? 'Administrador'}</strong><span>{admin?.role ?? 'ADMIN'}</span></div>
         <button className="logout-button" onClick={onLogout} type="button"><LogOut /> Sair</button>
       </div>

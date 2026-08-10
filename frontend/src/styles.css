@@ -3651,3 +3651,140 @@ input:focus, textarea:focus { outline: 3px solid rgba(23, 107, 135, .18); border
   .dashboard-visual-grid.expanded,
   .dashboard-rank-columns { grid-template-columns: 1fr; }
 }
+.refresh-button {
+  border: 1px solid #d7e4e0;
+  border-radius: 999px;
+  background: #fff;
+  color: #176b87;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  font-weight: 850;
+  cursor: pointer;
+  transition: border-color var(--cp-motion), box-shadow var(--cp-motion), transform var(--cp-motion);
+}
+
+.refresh-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.refresh-button:hover:not(:disabled),
+.refresh-button:focus-visible {
+  border-color: #176b87;
+  box-shadow: 0 8px 22px rgba(23, 107, 135, .14);
+}
+
+.refresh-button:disabled {
+  cursor: wait;
+  opacity: .65;
+}
+.toast-stack {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 80;
+  display: grid;
+  gap: 10px;
+  width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.admin-toast {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: start;
+  border: 1px solid #d7e4e0;
+  border-left-width: 5px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 18px 42px rgba(20, 38, 45, .14);
+  padding: 12px 12px 12px 14px;
+}
+
+.admin-toast.success { border-left-color: #0f8b5f; }
+.admin-toast.error { border-left-color: #c85252; }
+.admin-toast.info { border-left-color: #176b87; }
+.admin-toast strong { display: block; color: #162d36; font-size: .92rem; }
+.admin-toast span { display: block; margin-top: 3px; color: #526763; font-size: .86rem; line-height: 1.35; }
+.admin-toast button {
+  border: 1px solid #d7e4e0;
+  border-radius: 8px;
+  background: #fff;
+  color: #526763;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.admin-toast button svg { width: 15px; height: 15px; }
+.site-empty-guidance {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  min-height: 130px;
+  border: 1px dashed #c8d8d3;
+  border-radius: 10px;
+  background: #fbfdfc;
+  padding: 26px;
+  text-align: center;
+}
+
+.site-empty-guidance p {
+  max-width: 680px;
+  margin: 0;
+  color: #536763;
+  line-height: 1.55;
+}
+.public-form-card[data-method="voucher"] {
+  gap: 18px;
+}
+
+.public-form-card[data-method="voucher"] .voucher-code-field {
+  width: 100%;
+}
+
+.public-form-card[data-method="voucher"] .voucher-entry {
+  min-height: 86px;
+  border-radius: 22px;
+  padding: 16px;
+}
+
+.public-form-card[data-method="voucher"] .voucher-slots {
+  gap: 9px;
+}
+
+.public-form-card[data-method="voucher"] .voucher-slots span {
+  min-height: 42px;
+  font-size: 1.02rem;
+}
+
+.public-form-card[data-method="voucher"] .field-help {
+  margin-top: 8px;
+  font-size: .9rem;
+}
+
+@media (max-width: 520px) {
+  .public-form-card[data-method="voucher"] {
+    padding-inline: 14px;
+  }
+
+  .public-form-card[data-method="voucher"] .voucher-entry {
+    min-height: 78px;
+    padding: 12px;
+  }
+
+  .public-form-card[data-method="voucher"] .voucher-slots {
+    gap: 5px;
+  }
+
+  .public-form-card[data-method="voucher"] .voucher-slots span {
+    min-height: 34px;
+    font-size: .88rem;
+  }
+}

@@ -236,6 +236,7 @@ async def _authorize_unifi(db_or_payload, payload_or_minutes, minutes: int | Non
         requested_site=requested_site,
     )
     if db is not None:
+        ensure_not_in_maintenance(db, context.site_id)
         if auth_method:
             ensure_auth_method_allowed(db, context.site_id, auth_method)
         _ensure_client_not_blocked(db, client_mac=payload.clientMac, site_id=context.site_id)
@@ -263,7 +264,6 @@ def _auth_response(session: GuestSession, minutes: int) -> AuthResponse:
 
 @router.post("/auth/voucher", response_model=AuthResponse)
 async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Session = Depends(get_db)):
-    ensure_not_in_maintenance(db)
     ip = client_ip(request)
     enforce_rate_limit(db, payload.clientMac, ip, "voucher")
     code_hashes = _voucher_hash_candidates(payload.code)
@@ -277,8 +277,9 @@ async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Sessio
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "unifi_error")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel identificar o site real no UniFi.") from exc
+    ensure_not_in_maintenance(db, context.site_id)
     voucher_site = voucher.site_id or voucher.site
-    if voucher_site and voucher_site not in {context.site_id, context.site_name}:
+    if voucher_site and voucher_site not in {"ALL", "global", context.site_id, context.site_name}:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "site_mismatch")
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Este voucher nao e valido para esta unidade.")
     ensure_auth_method_allowed(db, context.site_id, "voucher")
@@ -306,7 +307,6 @@ async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Sessio
 
 @router.post("/auth/cpf", response_model=AuthResponse)
 async def auth_cpf(payload: CpfAuthRequest, request: Request, db: Session = Depends(get_db)):
-    ensure_not_in_maintenance(db)
     ip = client_ip(request)
     enforce_rate_limit(db, payload.clientMac, ip, "cpf")
     try:
@@ -321,11 +321,11 @@ async def auth_cpf(payload: CpfAuthRequest, request: Request, db: Session = Depe
 
 @router.post("/auth/email/request-code")
 async def request_email_code(payload: EmailCodeRequest, request: Request, db: Session = Depends(get_db)):
-    ensure_not_in_maintenance(db)
     ip = client_ip(request)
     enforce_rate_limit(db, payload.clientMac, ip, "email")
     try:
         context = await unifi_client.resolve_client_context(client_mac=payload.clientMac, ap_mac=payload.apMac, requested_site=None)
+        ensure_not_in_maintenance(db, context.site_id)
         ensure_auth_method_allowed(db, context.site_id, "email")
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "email", False, "unifi_error")
@@ -353,7 +353,6 @@ async def request_email_code(payload: EmailCodeRequest, request: Request, db: Se
 
 @router.post("/auth/email/verify-code", response_model=AuthResponse)
 async def verify_email_code(payload: EmailCodeVerify, request: Request, db: Session = Depends(get_db)):
-    ensure_not_in_maintenance(db)
     ip = client_ip(request)
     enforce_rate_limit(db, payload.clientMac, ip, "email-verify")
     row = db.scalar(select(EmailLoginCode).where(EmailLoginCode.email_hash == secret_hash(payload.email.lower()), EmailLoginCode.client_mac == payload.clientMac, EmailLoginCode.consumed_at.is_(None)).order_by(EmailLoginCode.expires_at.desc()).limit(1))
@@ -382,7 +381,6 @@ async def verify_email_code(payload: EmailCodeVerify, request: Request, db: Sess
 
 
 async def _provisional(payload: ProvisionalAccessRequest, request: Request, db: Session, method: str, minutes: int):
-    ensure_not_in_maintenance(db)
     ip = client_ip(request)
     enforce_rate_limit(db, payload.clientMac, ip, method, max_attempts=8)
     try:

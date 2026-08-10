@@ -35,6 +35,7 @@ type PublicPortalExperienceProps = {
   maintenanceTitle?: string
   maintenanceMessage?: string
   maintenanceImageUrl?: string
+  maintenanceActive?: boolean
   maintenanceStartsAt?: string | null
   maintenanceEndsAt?: string | null
   termsOpen?: boolean
@@ -170,7 +171,7 @@ export function PublicPortalExperience(props: PublicPortalExperienceProps) {
   const preview = Boolean(props.previewState)
   const method = preview ? previewMethod(props.previewState) : props.method
   const isReleased = props.stage === 'released' || props.previewState === 'released'
-  const isMaintenance = props.previewState === 'maintenance'
+  const isMaintenance = Boolean(props.maintenanceActive) || props.previewState === 'maintenance'
   const shouldShowNotice = props.previewState === 'notice'
   const flowStep = useMemo(() => {
     if (isMaintenance) return 'maintenance'

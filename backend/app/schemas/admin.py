@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, EmailStr, Field, field_validator
+from pydantic import AliasChoices, BaseModel, EmailStr, Field, field_validator, model_validator
 
 from app.models import AdminRole, NotificationType
 
@@ -221,10 +221,30 @@ class VoucherCreateRequest(BaseModel):
     @field_validator("site")
     @classmethod
     def valid_site(cls, value: str) -> str:
-        if value not in VALID_SITES - {"ALL"}:
+        if value not in VALID_SITES:
             raise ValueError("Site inválido.")
         return value
 
+class VoucherUpdateRequest(BaseModel):
+    description: str = Field(default="", max_length=240)
+    durationMinutes: int = Field(gt=0, le=10080)
+    timeLimitMinutes: int | None = Field(default=None, gt=0, le=10080)
+    dataLimitMb: int | None = Field(default=None, gt=0)
+    downloadLimit: int | None = Field(default=None, gt=0)
+    uploadLimit: int | None = Field(default=None, gt=0)
+    deviceLimit: int = Field(default=1, gt=0, le=100)
+    maxDevices: int | None = Field(default=None, gt=0, le=100)
+    site: str = "Default"
+    siteId: str | None = None
+    enabled: bool = True
+    expiresAt: datetime | None = None
+
+    @field_validator("site")
+    @classmethod
+    def valid_site(cls, value: str) -> str:
+        if value not in VALID_SITES:
+            raise ValueError("Site inválido.")
+        return value
 
 class VoucherResponse(BaseModel):
     id: str
@@ -303,6 +323,20 @@ class MaintenanceUpdateRequest(BaseModel):
     maintenanceEndAt: datetime | None = None
     maintenanceImageUrl: str = Field(default="", max_length=2048)
     maintenanceVisualConfig: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def valid_window(self):
+        if self.maintenanceStartAt and self.maintenanceEndAt:
+            start = self.maintenanceStartAt
+            end = self.maintenanceEndAt
+            if (start.tzinfo is None) != (end.tzinfo is None):
+                if start.tzinfo is None:
+                    end = end.replace(tzinfo=None)
+                else:
+                    start = start.replace(tzinfo=None)
+            if end <= start:
+                raise ValueError("O termino da manutencao deve ser posterior ao inicio.")
+        return self
 
 
 class MaintenanceAdminResponse(BaseModel):
