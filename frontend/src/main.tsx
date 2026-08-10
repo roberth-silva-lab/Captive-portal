@@ -41,6 +41,7 @@ import type {
   AdminSection,
   AdminUserRow,
   AuditEntry,
+  AuthAttemptRow,
   AuthResponse,
   ClientRow,
   Dashboard,
@@ -458,6 +459,7 @@ function Admin() {
   const [admins, setAdmins] = useState<AdminUserRow[]>([])
   const [adminInvitations, setAdminInvitations] = useState<AdminInviteResponse[]>([])
   const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null)
+  const [authAttempts, setAuthAttempts] = useState<AuthAttemptRow[]>([])
   const [testingEmail, setTestingEmail] = useState(false)
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all')
   const [loadStatus, setLoadStatus] = useState<'loading' | 'ready' | 'unauthenticated' | 'forbidden' | 'error'>('loading')
@@ -509,7 +511,7 @@ function Admin() {
     loadInFlight.current = true
     setRefreshing(true)
     try {
-      const [me, allowedSiteRows, dash, chartRows, maint, appearanceRow, selectedAppearanceRow, siteRows, noticeRows, auditRows, voucherRows, visitorRows, accessPointRows, sessionRows, adminRows, invitationRows, healthRow] = await Promise.all([
+      const [me, allowedSiteRows, dash, chartRows, maint, appearanceRow, selectedAppearanceRow, siteRows, noticeRows, auditRows, voucherRows, visitorRows, accessPointRows, sessionRows, adminRows, invitationRows, healthRow, attemptRows] = await Promise.all([
         api<AdminMe>('/api/admin/me'),
         api<AllowedSite[]>('/api/admin/sites/allowed').catch(() => []),
         api<Dashboard>(scopedPath('/api/admin/dashboard')),
@@ -527,6 +529,7 @@ function Admin() {
         api<AdminUserRow[]>('/api/admin/admins').catch(() => []),
         api<AdminInviteResponse[]>('/api/admin/admins/invitations').catch(() => []),
         api<SystemHealth>('/api/admin/system-health').catch(() => null),
+        api<AuthAttemptRow[]>('/api/admin/auth-attempts').catch(() => []),
       ])
     const normalizedMe = { ...me, siteIds: asArray(me.siteIds) }
     const safeAllowedSites = asArray(allowedSiteRows)
@@ -550,6 +553,7 @@ function Admin() {
       setAdmins(asArray(adminRows))
       setAdminInvitations(asArray(invitationRows))
       setSystemHealth(healthRow)
+      setAuthAttempts(asArray(attemptRows))
       setLoadStatus('ready')
       setLastUpdatedAt(new Date())
       setRefreshError('')
@@ -775,7 +779,7 @@ function Admin() {
           {activeSection === 'audit' ? <AuditPanel audit={audit} /> : null}
           {activeSection === 'portal-sites' ? <PortalSitesPanel sites={sites} allowedSites={allowedSites} selectedSiteId={selectedSiteId} onSelectSite={handleSiteChange} onOpenPortal={() => { setActiveSection('portal'); window.history.pushState(null, '', '/admin/portal') }} onOpenMaintenance={() => { setActiveSection('maintenance'); window.history.pushState(null, '', '/admin/maintenance') }} /> : null}
           {activeSection === 'portal' ? appearance ? <SettingsPanel admin={admin} maintenance={maintenance} appearance={selectedSiteId !== 'ALL' && siteAppearance ? siteAppearance : appearance} allowedSites={allowedSites} selectedSiteId={selectedSiteId} siteAppearance={siteAppearance} notices={notices} saving={appearanceSaving} feedback={appearanceMessage} onChange={(value) => selectedSiteId !== 'ALL' && siteAppearance ? setSiteAppearance({ ...siteAppearance, ...value }) : setAppearance(value)} onSave={saveAppearance} onResetSite={resetSiteAppearance} /> : <AdminRouteState title="Portal público" message="Configurações do portal ainda não carregadas." /> : null}
-          {activeSection === 'health' ? <SystemHealthPanel health={systemHealth} admin={admin} busy={testingEmail} onRefresh={() => void load().catch(() => undefined)} onTestEmail={testSystemEmail} /> : null}
+          {activeSection === 'health' ? <SystemHealthPanel health={systemHealth} attempts={authAttempts} admin={admin} busy={testingEmail} onRefresh={() => void load().catch(() => undefined)} onTestEmail={testSystemEmail} /> : null}
           {activeSection === 'settings' ? <AccountSettingsPanel admin={admin} onRequestPasswordReset={requestPasswordReset} onResetPassword={resetPassword} onToast={notifyAdmin} /> : null}
         </AdminSectionErrorBoundary>
       </section>
@@ -1076,7 +1080,7 @@ function HealthStatusBadge({ value }: { value: string | boolean }) {
   return <span className={`health-status ${ok ? 'ok' : 'warning'}`}>{ok ? 'OK' : 'Atenção'}</span>
 }
 
-function SystemHealthPanel({ health, admin, busy, onRefresh, onTestEmail }: { health: SystemHealth | null; admin: AdminMe | null; busy: boolean; onRefresh: () => void; onTestEmail: (email: string) => Promise<void> }) {
+function SystemHealthPanel({ health, attempts, admin, busy, onRefresh, onTestEmail }: { health: SystemHealth | null; attempts: AuthAttemptRow[]; admin: AdminMe | null; busy: boolean; onRefresh: () => void; onTestEmail: (email: string) => Promise<void> }) {
   const [targetEmail, setTargetEmail] = useState(admin?.email || '')
   const [message, setMessage] = useState('')
   const runEmailTest = async () => {
@@ -1092,7 +1096,7 @@ function SystemHealthPanel({ health, admin, busy, onRefresh, onTestEmail }: { he
       setMessage(err instanceof Error ? err.message : 'Teste SMTP falhou.')
     }
   }
-  return <div className="admin-content"><PageHeader title="Saúde do sistema" description="Diagnóstico operacional do portal, banco, UniFi, mídia e envio de e-mail." action={<button className="soft-button" type="button" onClick={onRefresh}>Atualizar</button>} />{health ? <section className="health-grid"><Panel title="Banco e schema" icon={<Gauge />} compact><div className="health-stack"><div><span>Banco</span><HealthStatusBadge value={health.database.status} /></div><div><span>Schema</span><HealthStatusBadge value={health.schema.status} /></div><div><span>Revisão Alembic</span><strong>{health.schema.alembicRevision || 'Não informada'}</strong></div>{health.schema.findings.length ? <p className="error">Pendências: {health.schema.findings.join(', ')}</p> : <p className="success">Migrações compatíveis.</p>}</div></Panel><Panel title="UniFi" icon={<Radio />} compact><div className="health-stack"><div><span>Status</span><HealthStatusBadge value={health.unifi.status} /></div><div><span>Sites retornados</span><strong>{health.unifi.sites}</strong></div>{health.unifi.message ? <p className="error">{health.unifi.message}</p> : <p className="success">Integração respondendo.</p>}</div></Panel><Panel title="SMTP" icon={<FileClock />} compact><div className="health-stack"><div><span>Configuração</span><HealthStatusBadge value={health.smtp.configured} /></div><div><span>Servidor</span><strong>{health.smtp.host || 'Não configurado'}:{health.smtp.port}</strong></div><div><span>Remetente</span><strong>{health.smtp.from || 'Não configurado'}</strong></div><label htmlFor="health-email-test">Enviar teste para<input id="health-email-test" value={targetEmail} onChange={(event) => setTargetEmail(event.target.value)} inputMode="email" autoComplete="email" /></label><button className="primary admin-save" type="button" onClick={() => void runEmailTest()} disabled={busy || !health.smtp.configured}>{busy ? 'Enviando...' : 'Testar e-mail'}</button>{message ? <p className={message.includes('falhou') || message.includes('Informe') ? 'error' : 'success'} role="status">{message}</p> : null}</div></Panel><Panel title="Runtime" icon={<Settings />} compact><div className="health-stack"><div><span>Ambiente</span><strong>{health.runtime.environment}</strong></div><div><span>MFA admin por e-mail</span><HealthStatusBadge value={health.runtime.adminEmailMfaRequired} /></div><div><span>Mídia pública</span><strong>{health.runtime.mediaPublicBaseUrl}</strong></div><div><span>Portal público</span><strong>{health.runtime.publicBaseUrl}</strong></div><div><span>Painel admin</span><strong>{health.runtime.adminBaseUrl}</strong></div></div></Panel></section> : <Panel title="Saúde indisponível" icon={<AlertTriangle />}><EmptyState message="Ainda não foi possível carregar o diagnóstico operacional." /></Panel>}</div>
+  return <div className="admin-content"><PageHeader title="Saúde do sistema" description="Diagnóstico operacional do portal, banco, UniFi, mídia e envio de e-mail." action={<button className="soft-button" type="button" onClick={onRefresh}>Atualizar</button>} />{health ? <section className="health-grid"><Panel title="Banco e schema" icon={<Gauge />} compact><div className="health-stack"><div><span>Banco</span><HealthStatusBadge value={health.database.status} /></div><div><span>Schema</span><HealthStatusBadge value={health.schema.status} /></div><div><span>Revisão Alembic</span><strong>{health.schema.alembicRevision || 'Não informada'}</strong></div>{health.schema.findings.length ? <p className="error">Pendências: {health.schema.findings.join(', ')}</p> : <p className="success">Migrações compatíveis.</p>}</div></Panel><Panel title="UniFi" icon={<Radio />} compact><div className="health-stack"><div><span>Status</span><HealthStatusBadge value={health.unifi.status} /></div><div><span>Sites retornados</span><strong>{health.unifi.sites}</strong></div>{health.unifi.message ? <p className="error">{health.unifi.message}</p> : <p className="success">Integração respondendo.</p>}</div></Panel><Panel title="SMTP" icon={<FileClock />} compact><div className="health-stack"><div><span>Configuração</span><HealthStatusBadge value={health.smtp.configured} /></div><div><span>Servidor</span><strong>{health.smtp.host || 'Não configurado'}:{health.smtp.port}</strong></div><div><span>Remetente</span><strong>{health.smtp.from || 'Não configurado'}</strong></div><label htmlFor="health-email-test">Enviar teste para<input id="health-email-test" value={targetEmail} onChange={(event) => setTargetEmail(event.target.value)} inputMode="email" autoComplete="email" /></label><button className="primary admin-save" type="button" onClick={() => void runEmailTest()} disabled={busy || !health.smtp.configured}>{busy ? 'Enviando...' : 'Testar e-mail'}</button>{message ? <p className={message.includes('falhou') || message.includes('Informe') ? 'error' : 'success'} role="status">{message}</p> : null}</div></Panel><Panel title="Runtime" icon={<Settings />} compact><div className="health-stack"><div><span>Ambiente</span><strong>{health.runtime.environment}</strong></div><div><span>MFA admin por e-mail</span><HealthStatusBadge value={health.runtime.adminEmailMfaRequired} /></div><div><span>Mídia pública</span><strong>{health.runtime.mediaPublicBaseUrl}</strong></div><div><span>Portal público</span><strong>{health.runtime.publicBaseUrl}</strong></div><div><span>Painel admin</span><strong>{health.runtime.adminBaseUrl}</strong></div></div></Panel></section> : <Panel title="Saúde indisponível" icon={<AlertTriangle />}><EmptyState message="Ainda não foi possível carregar o diagnóstico operacional." /></Panel>}<Panel title="Eventos recentes do portal" icon={<History />} compact>{attempts.length ? <div className="auth-attempt-list">{attempts.slice(0, 80).map((row) => <article key={row.id} className={row.success ? 'ok' : 'error'}><div><strong>{methodLabel(row.method)}</strong><span>{formatClock(row.createdAt)}</span></div><p>{row.success ? 'Autenticação aceita' : 'Falha'}{row.reason ? ` · ${row.reason}` : ''}</p></article>)}</div> : <EmptyState message="Nenhum evento de autenticação recente." />}</Panel></div>
 }
 
 function SiteDetailPanel({ siteId, sites, visitors, sessions, accessPoints, vouchers, notices, maintenance, onBack, onOpenSection }: { siteId: string; sites: SiteNode[]; visitors: ClientRow[]; sessions: GuestSessionRow[]; accessPoints: AccessPoint[]; vouchers: Voucher[]; notices: AdminNotice[]; maintenance: MaintenanceAdmin | null; onBack: () => void; onOpenSection: (section: AdminSection) => void }) {

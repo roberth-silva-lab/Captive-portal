@@ -20,6 +20,7 @@ export type AllowedSite = { siteId: string; name: string; allowed: boolean }
 export type SiteNode = { name: string; siteId?: string; status: string; aps: number; connectedClients: number; sessions: number; allowed?: boolean; authMethods?: Method[] }
 export type AdminNotice = Notice & { enabled: boolean; createdAt: string; updatedAt: string }
 export type AuditEntry = { id: number; actorId: string; event: string; createdAt: string; targetId: string; targetType?: string; siteLabel?: string }
+export type AuthAttemptRow = { id: number; method: string; success: boolean; reason: string; createdAt: string }
 export type Voucher = { id: string; codeLabel: string; description: string; status: string; durationMinutes: number; site: string; siteId?: string; siteName?: string; enabled: boolean; usedCount: number; expiresAt?: string | null; maxDevices: number; dataLimitMb?: number | null; downloadLimit?: number | null; uploadLimit?: number | null; deviceLimit: number; isActive: boolean; revokedAt?: string | null; createdAt: string }
 export type CreatedVoucherCode = { id: string; code: string; codeLabel: string; site: string; durationMinutes: number; expiresAt?: string | null }
 export type VoucherBatchCreateResponse = { created: number; vouchers: CreatedVoucherCode[] }

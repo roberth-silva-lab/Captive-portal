@@ -174,6 +174,14 @@ class AccessBlockResponse(BaseModel):
     revokedAt: datetime | None = None
     createdBy: str
 
+
+class AuthAttemptResponse(BaseModel):
+    id: int
+    method: str
+    success: bool
+    reason: str
+    createdAt: datetime
+
 class DashboardSummary(BaseModel):
     connectedNow: int
     activeSessions: int

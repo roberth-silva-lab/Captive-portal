@@ -3783,6 +3783,52 @@ input:focus, textarea:focus { outline: 3px solid rgba(23, 107, 135, .18); border
   font-weight: 850;
 }
 
+.auth-attempt-list {
+  display: grid;
+  gap: 8px;
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.auth-attempt-list article {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #e3ece9;
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.auth-attempt-list article.ok { border-left-color: #0f8b5f; }
+.auth-attempt-list article.error { border-left-color: #c85252; }
+
+.auth-attempt-list article div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.auth-attempt-list strong {
+  color: #17262d;
+  font-size: .92rem;
+}
+
+.auth-attempt-list span {
+  color: #65746f;
+  font-size: .78rem;
+  white-space: nowrap;
+}
+
+.auth-attempt-list p {
+  margin: 0;
+  color: #526763;
+  font-size: .86rem;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1180px) {
   .dashboard-visual-grid.expanded { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

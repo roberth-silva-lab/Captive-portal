@@ -53,6 +53,7 @@ from app.schemas.admin import (
     AdminPasswordResetRequest,
     AdminSiteAccessUpdateRequest,
     AllowedSiteResponse,
+    AuthAttemptResponse,
     CreatedVoucherCode,
     DashboardSummary,
     MaintenanceAdminResponse,
@@ -1012,6 +1013,14 @@ def audit_log(siteId: str | None = None, db: Session = Depends(get_db), admin: A
         if len(visible) >= 80:
             break
     return visible
+
+
+@router.get("/auth-attempts", response_model=list[AuthAttemptResponse])
+def auth_attempts(limit: int = Query(default=120, ge=1, le=300), db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+    rows = db.scalars(select(AuthAttempt).order_by(AuthAttempt.created_at.desc()).limit(limit)).all()
+    return [AuthAttemptResponse(id=row.id, method=row.method, success=row.success, reason=row.reason, createdAt=row.created_at) for row in rows]
+
+
 @router.get("/maintenance/audit")
 def maintenance_audit(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
     rows = db.scalars(select(AuditLog).where(AuditLog.target_type == "maintenance").order_by(AuditLog.created_at.desc()).limit(50)).all()
