@@ -54,7 +54,7 @@ def test_admin_login_requires_email_code_when_mfa_enabled(client, admin_user, mo
     assert response.status_code == 200
     assert response.json()["mfaRequired"] is True
     assert "portal_admin_session" not in response.headers.get("set-cookie", "")
-    assert sent == [("admin@example.com", "Codigo de acesso ao painel")]
+    assert sent == [("admin@example.com", "Código de acesso ao painel")]
     assert client.get("/api/admin/me").status_code == 401
 
     verified = client.post("/api/admin/login/verify-code", json={"email": "admin@example.com", "password": "StrongPassword123!", "code": "123456"})
@@ -72,7 +72,7 @@ def test_admin_password_reset_with_email_code(client, admin_user, monkeypatch):
 
     requested = client.post("/api/admin/password/forgot", json={"email": "admin@example.com"})
     assert requested.status_code == 200
-    assert sent == [("admin@example.com", "Recuperacao de senha do painel")]
+    assert sent == [("admin@example.com", "Recuperação de senha do painel")]
 
     reset = client.post(
         "/api/admin/password/reset",

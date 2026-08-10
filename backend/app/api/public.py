@@ -122,7 +122,7 @@ def active_notifications(db: Session, site: str | None = None) -> list[Notificat
 def ensure_not_in_maintenance(db: Session, site_id: str | None = None) -> None:
     maintenance = get_maintenance(db, site_id)
     if maintenance.active:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, maintenance.message or "Portal temporariamente em manutencao.")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, maintenance.message or "Portal temporariamente em manutenção.")
 
 
 
@@ -170,7 +170,7 @@ def allowed_auth_methods(db: Session, site_id: str | None = None) -> list[str]:
 
 def ensure_auth_method_allowed(db: Session, site_id: str | None, method: str) -> None:
     if method.lower() not in allowed_auth_methods(db, site_id):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Esta forma de acesso nao esta habilitada para esta unidade.")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Esta forma de acesso não está habilitada para esta unidade.")
 
 
 @media_router.get("/media/{media_id}")
@@ -203,7 +203,7 @@ async def settings(site: str | None = None, clientMac: str | None = None, apMac:
                 id="maintenance-scheduled",
                 type=NotificationType.MAINTENANCE,
                 title=maintenance.title or "Manutencao programada",
-                message=maintenance.message or "O portal passara por manutencao programada.",
+                message=maintenance.message or "O portal passará por manutenção programada.",
                 startsAt=maintenance.startsAt,
                 endsAt=maintenance.endsAt,
                 site=site_id or "ALL",
@@ -216,7 +216,7 @@ async def settings(site: str | None = None, clientMac: str | None = None, apMac:
         primaryColor=_site_setting_value(site_row, "primary_color", portal_setting(db, "primary_color", "#176b87")),
         bannerText=_site_setting_value(site_row, "public_title", portal_setting(db, "banner_text", "Portal de Acesso Wi-Fi")),
         welcomeText=_site_setting_value(site_row, "welcome_text", portal_setting(db, "welcome_text", "Conecte-se de forma segura a rede de visitantes.")),
-        termsText=_site_setting_value(site_row, "terms_text", portal_setting(db, "terms_text", "Ao continuar, voce aceita os termos de uso da rede.")),
+        termsText=_site_setting_value(site_row, "terms_text", portal_setting(db, "terms_text", "Ao continuar, você aceita os termos de uso da rede.")),
         maintenanceMode=maintenance.active,
         maintenance=maintenance,
         notifications=notices,
@@ -229,7 +229,7 @@ async def _authorize_unifi(db_or_payload, payload_or_minutes, minutes: int | Non
     payload = payload_or_minutes if db is not None else db_or_payload
     selected_minutes = minutes if db is not None else int(payload_or_minutes)
     if selected_minutes is None:
-        raise UniFiError("Duracao de autorizacao ausente.")
+        raise UniFiError("Duração de autorização ausente.")
     context = await unifi_client.resolve_client_context(
         client_mac=payload.clientMac,
         ap_mac=payload.apMac,
@@ -243,13 +243,13 @@ async def _authorize_unifi(db_or_payload, payload_or_minutes, minutes: int | Non
     await unifi_client.authorize_guest(site_id=context.site_id, client_id=context.client_id, minutes=selected_minutes, data_limit_mb=data_limit_mb, rx_kbps=download_limit, tx_kbps=upload_limit)
     confirmed = await unifi_client.get_client_by_mac(context.site_id, payload.clientMac)
     if not confirmed.authorized:
-        raise UniFiError("UniFi nao confirmou authorized=true para o cliente.")
+        raise UniFiError("UniFi não confirmou authorized=true para o cliente.")
     return context.site_id, confirmed.id
 
 
 def _auth_response(session: GuestSession, minutes: int) -> AuthResponse:
     if session.expires_at is None or session.authorized_at is None:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Sessao sem confirmacao de autorizacao.")
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Sessão sem confirmação de autorização.")
     total_seconds = duration_between(session.authorized_at, session.expires_at)
     return AuthResponse(
         sessionId=session.id,
@@ -271,17 +271,17 @@ async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Sessio
     voucher = db.scalar(select(Voucher).where(Voucher.code_hash.in_(code_hashes), Voucher.is_active.is_(True)))
     if not voucher or (voucher.expires_at and voucher.expires_at <= now):
         record_attempt(db, payload.clientMac, ip, "voucher", False, "invalid_voucher")
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Voucher invalido.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Voucher inválido.")
     try:
         context = await unifi_client.resolve_client_context(client_mac=payload.clientMac, ap_mac=payload.apMac, requested_site=None)
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "unifi_error")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel identificar o site real no UniFi.") from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível identificar o site real no UniFi.") from exc
     ensure_not_in_maintenance(db, context.site_id)
     voucher_site = voucher.site_id or voucher.site
     if voucher_site and voucher_site not in {"ALL", "global", context.site_id, context.site_name}:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "site_mismatch")
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Este voucher nao e valido para esta unidade.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Este voucher não é válido para esta unidade.")
     ensure_auth_method_allowed(db, context.site_id, "voucher")
     _ensure_client_not_blocked(db, client_mac=payload.clientMac, site_id=context.site_id)
     used_devices = db.scalars(select(GuestSession.client_mac).where(GuestSession.voucher_id == voucher.id).distinct()).all()
@@ -294,10 +294,10 @@ async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Sessio
         await unifi_client.authorize_guest(site_id=context.site_id, client_id=context.client_id, minutes=minutes, data_limit_mb=voucher.data_limit_mb, rx_kbps=voucher.download_limit, tx_kbps=voucher.upload_limit)
         confirmed = await unifi_client.get_client_by_mac(context.site_id, payload.clientMac)
         if not confirmed.authorized:
-            raise UniFiError("UniFi nao confirmou authorized=true para o cliente.")
+            raise UniFiError("UniFi não confirmou authorized=true para o cliente.")
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "unifi_error")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel confirmar a autorizacao no UniFi.") from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível confirmar a autorização no UniFi.") from exc
     session = authorize_session(db, client_mac=payload.clientMac, ap_mac=payload.apMac or "", ssid=payload.ssid or "", site=context.site_id, method=AuthorizationMethod.VOUCHER, minutes=minutes, unifi_client_id=confirmed.id, ip=payload.ip or ip, voucher_id=voucher.id)
     voucher.used_count += 1
     db.commit()
@@ -313,7 +313,7 @@ async def auth_cpf(payload: CpfAuthRequest, request: Request, db: Session = Depe
         site_id, client_id = await _authorize_unifi(db, payload, 60, auth_method="cpf")
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "cpf", False, "unifi_error")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel confirmar a autorizacao no UniFi.") from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível confirmar a autorização no UniFi.") from exc
     session = authorize_session(db, client_mac=payload.clientMac, ap_mac=payload.apMac or "", ssid=payload.ssid or "", site=site_id, method=AuthorizationMethod.CPF, minutes=60, unifi_client_id=client_id, name=payload.name, cpf=payload.cpf, phone=payload.phone or "", ip=payload.ip or ip)
     record_attempt(db, payload.clientMac, ip, "cpf", True)
     return _auth_response(session, 60)
@@ -329,7 +329,7 @@ async def request_email_code(payload: EmailCodeRequest, request: Request, db: Se
         ensure_auth_method_allowed(db, context.site_id, "email")
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "email", False, "unifi_error")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel identificar a unidade no UniFi.") from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível identificar a unidade no UniFi.") from exc
     code = str(int(random_token_urlsafe(4).encode().hex(), 16))[-6:].zfill(6)
     ttl_minutes = get_settings().email_code_ttl_minutes
     expires_at = utcnow() + timedelta(minutes=ttl_minutes)
@@ -359,7 +359,7 @@ async def verify_email_code(payload: EmailCodeVerify, request: Request, db: Sess
     row = db.scalar(select(EmailLoginCode).where(EmailLoginCode.email_hash == secret_hash(payload.email.lower()), EmailLoginCode.client_mac == payload.clientMac, EmailLoginCode.consumed_at.is_(None)).order_by(EmailLoginCode.expires_at.desc()).limit(1))
     if not row or row.expires_at <= utcnow():
         record_attempt(db, payload.clientMac, ip, "email-verify", False, "expired")
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Codigo invalido ou expirado.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Código inválido ou expirado.")
     row.attempts += 1
     if row.attempts > 5:
         row.consumed_at = utcnow()
@@ -368,14 +368,14 @@ async def verify_email_code(payload: EmailCodeVerify, request: Request, db: Sess
     if row.code_hash != secret_hash(payload.code.strip()):
         db.commit()
         record_attempt(db, payload.clientMac, ip, "email-verify", False, "invalid")
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Codigo invalido.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Código inválido.")
     row.consumed_at = utcnow()
     db.commit()
     try:
         site_id, client_id = await _authorize_unifi(db, payload, 60, auth_method="email")
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "email-verify", False, "unifi_error")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel confirmar a autorizacao no UniFi.") from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível confirmar a autorização no UniFi.") from exc
     session = authorize_session(db, client_mac=payload.clientMac, ap_mac=payload.apMac or "", ssid=payload.ssid or "", site=site_id, method=AuthorizationMethod.EMAIL, minutes=60, unifi_client_id=client_id, email=payload.email, ip=payload.ip or ip)
     record_attempt(db, payload.clientMac, ip, "email-verify", True)
     return _auth_response(session, 60)
@@ -388,7 +388,7 @@ async def _provisional(payload: ProvisionalAccessRequest, request: Request, db: 
         site_id, client_id = await _authorize_unifi(db, payload, minutes)
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, method, False, "unifi_error")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Nao foi possivel confirmar acesso provisorio no UniFi.") from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível confirmar acesso provisório no UniFi.") from exc
     authorize_session(db, client_mac=payload.clientMac, ap_mac=payload.apMac or "", ssid=payload.ssid or "", site=site_id, method=AuthorizationMethod.PROVISIONAL, minutes=minutes, unifi_client_id=client_id, ip=payload.ip or ip)
     record_attempt(db, payload.clientMac, ip, method, True)
     return {"ok": True}
@@ -411,7 +411,7 @@ def session_status(clientMac: str | None = None, mac: str | None = None, db: Ses
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "clientMac obrigatorio.")
     session = db.scalar(select(GuestSession).where(GuestSession.client_mac == selected_mac).order_by(GuestSession.created_at.desc()).limit(1))
     if not session:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sessao nao encontrada.")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sessão não encontrada.")
     if session.status == SessionStatus.AUTHORIZED and session.expires_at and session.expires_at <= utcnow() and not (session.site and session.unifi_client_id):
         session.status = SessionStatus.EXPIRED
         session.duration_seconds = duration_between(session.authorized_at or session.created_at, session.expires_at)
@@ -433,7 +433,7 @@ def session_status(clientMac: str | None = None, mac: str | None = None, db: Ses
         establishmentName="Gabinete Itinerante",
         ssid=session.ssid,
         warningMinutes=warning_minutes,
-        warningMessage=f"Sua sessao expira em menos de {warning_minutes} minutos." if warning_minutes else None,
+        warningMessage=f"Sua sessão expira em menos de {warning_minutes} minutos." if warning_minutes else None,
         nextCheckSeconds=30,
     )
 

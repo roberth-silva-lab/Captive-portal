@@ -239,7 +239,7 @@ class MaintenanceConfig(Base):
     __tablename__ = "maintenance_configs"
     id: Mapped[str] = mapped_column(String(48), primary_key=True, default=lambda: "global")
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    title: Mapped[str] = mapped_column(String(160), default="Portal em manutencao")
+    title: Mapped[str] = mapped_column(String(160), default="Portal em manutenção")
     message: Mapped[str] = mapped_column(Text, default="Estamos realizando ajustes para melhorar o acesso.")
     start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)

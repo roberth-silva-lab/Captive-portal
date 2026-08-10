@@ -46,11 +46,11 @@ def wifi_code_email(code: str, ttl_minutes: int) -> tuple[str, str]:
     escaped_code = html.escape(grouped_code)
     text = (
         "Receita Federal - Acesso Wi-Fi Visitantes\n\n"
-        "Seu codigo de confirmacao\n\n"
+        "Seu código de confirmação\n\n"
         f"{grouped_code}\n\n"
-        f"Este codigo e valido por {ttl_minutes} minutos.\n"
-        "Voce recebeu esta mensagem porque foi solicitado acesso a rede Wi-Fi Visitantes.\n"
-        "Se voce nao solicitou este acesso, ignore esta mensagem."
+        f"Este código é válido por {ttl_minutes} minutos.\n"
+        "Você recebeu esta mensagem porque foi solicitado acesso à rede Wi-Fi Visitantes.\n"
+        "Se você não solicitou este acesso, ignore esta mensagem."
     )
     html_body = f"""
     <!doctype html>
@@ -64,11 +64,11 @@ def wifi_code_email(code: str, ttl_minutes: int) -> tuple[str, str]:
                 <div style="font-size:22px;font-weight:700;margin-top:4px;">Acesso Wi-Fi Visitantes</div>
               </td></tr>
               <tr><td style="padding:26px 24px;">
-                <h1 style="font-size:20px;margin:0 0 12px;">Seu codigo de confirmacao</h1>
+                <h1 style="font-size:20px;margin:0 0 12px;">Seu código de confirmação</h1>
                 <div style="font-size:38px;letter-spacing:.14em;font-weight:800;color:#123f52;background:#eef6f4;border:1px solid #d8e7e1;border-radius:8px;padding:18px;text-align:center;">{escaped_code}</div>
-                <p style="font-size:15px;line-height:1.55;margin:18px 0 0;">Este codigo e valido por <strong>{ttl_minutes} minutos</strong>.</p>
-                <p style="font-size:14px;line-height:1.55;color:#5f706a;margin:12px 0 0;">Voce recebeu esta mensagem porque foi solicitado acesso a rede Wi-Fi Visitantes.</p>
-                <p style="font-size:14px;line-height:1.55;color:#5f706a;margin:8px 0 0;">Se voce nao solicitou este acesso, ignore esta mensagem.</p>
+                <p style="font-size:15px;line-height:1.55;margin:18px 0 0;">Este código é válido por <strong>{ttl_minutes} minutos</strong>.</p>
+                <p style="font-size:14px;line-height:1.55;color:#5f706a;margin:12px 0 0;">Você recebeu esta mensagem porque foi solicitado acesso à rede Wi-Fi Visitantes.</p>
+                <p style="font-size:14px;line-height:1.55;color:#5f706a;margin:8px 0 0;">Se você não solicitou este acesso, ignore esta mensagem.</p>
               </td></tr>
             </table>
           </td></tr>
@@ -119,11 +119,11 @@ def admin_login_code_email(code: str, ttl_minutes: int) -> tuple[str, str]:
     grouped_code = f"{code[:3]} {code[3:]}" if len(code) == 6 else code
     escaped_code = html.escape(grouped_code)
     text = (
-        "Portal Wi-Fi - Codigo de acesso administrativo\n\n"
-        "Seu codigo de verificacao\n\n"
+        "Portal Wi-Fi - Código de acesso administrativo\n\n"
+        "Seu código de verificação\n\n"
         f"{grouped_code}\n\n"
-        f"Este codigo e valido por {ttl_minutes} minutos.\n"
-        "Se voce nao tentou acessar o painel, ignore esta mensagem."
+        f"Este código é válido por {ttl_minutes} minutos.\n"
+        "Se você não tentou acessar o painel, ignore esta mensagem."
     )
     html_body = f"""
     <!doctype html>
@@ -134,13 +134,13 @@ def admin_login_code_email(code: str, ttl_minutes: int) -> tuple[str, str]:
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #dce7e3;border-radius:8px;overflow:hidden;">
               <tr><td style="background:#125f78;color:#ffffff;padding:22px 24px;">
                 <div style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.82;">Portal Wi-Fi</div>
-                <div style="font-size:22px;font-weight:700;margin-top:4px;">Verificacao administrativa</div>
+                <div style="font-size:22px;font-weight:700;margin-top:4px;">Verificação administrativa</div>
               </td></tr>
               <tr><td style="padding:26px 24px;">
-                <h1 style="font-size:20px;margin:0 0 12px;">Seu codigo de verificacao</h1>
+                <h1 style="font-size:20px;margin:0 0 12px;">Seu código de verificação</h1>
                 <div style="font-size:38px;letter-spacing:.14em;font-weight:800;color:#123f52;background:#eef6f4;border:1px solid #d8e7e1;border-radius:8px;padding:18px;text-align:center;">{escaped_code}</div>
-                <p style="font-size:15px;line-height:1.55;margin:18px 0 0;">Este codigo e valido por <strong>{ttl_minutes} minutos</strong>.</p>
-                <p style="font-size:14px;line-height:1.55;color:#5f706a;margin:12px 0 0;">Se voce nao tentou acessar o painel, ignore esta mensagem.</p>
+                <p style="font-size:15px;line-height:1.55;margin:18px 0 0;">Este código é válido por <strong>{ttl_minutes} minutos</strong>.</p>
+                <p style="font-size:14px;line-height:1.55;color:#5f706a;margin:12px 0 0;">Se você não tentou acessar o painel, ignore esta mensagem.</p>
               </td></tr>
             </table>
           </td></tr>
@@ -155,11 +155,11 @@ def admin_password_reset_code_email(code: str, ttl_minutes: int) -> tuple[str, s
     grouped_code = f"{code[:3]} {code[3:]}" if len(code) == 6 else code
     escaped_code = html.escape(grouped_code)
     text = (
-        "Portal Wi-Fi - Recuperacao de senha\n\n"
-        "Use o codigo abaixo para redefinir sua senha administrativa:\n\n"
+        "Portal Wi-Fi - Recuperação de senha\n\n"
+        "Use o código abaixo para redefinir sua senha administrativa:\n\n"
         f"{grouped_code}\n\n"
-        f"Este codigo e valido por {ttl_minutes} minutos.\n"
-        "Se voce nao solicitou a recuperacao, ignore esta mensagem."
+        f"Este código é válido por {ttl_minutes} minutos.\n"
+        "Se você não solicitou a recuperação, ignore esta mensagem."
     )
     html_body = f"""
     <!doctype html>
@@ -170,13 +170,13 @@ def admin_password_reset_code_email(code: str, ttl_minutes: int) -> tuple[str, s
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #dce7e3;border-radius:8px;overflow:hidden;">
               <tr><td style="background:#125f78;color:#ffffff;padding:22px 24px;">
                 <div style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.82;">Portal Wi-Fi</div>
-                <div style="font-size:22px;font-weight:700;margin-top:4px;">Recuperacao de senha</div>
+                <div style="font-size:22px;font-weight:700;margin-top:4px;">Recuperação de senha</div>
               </td></tr>
               <tr><td style="padding:26px 24px;">
-                <h1 style="font-size:20px;margin:0 0 12px;">Codigo para redefinir senha</h1>
+                <h1 style="font-size:20px;margin:0 0 12px;">Código para redefinir senha</h1>
                 <div style="font-size:38px;letter-spacing:.14em;font-weight:800;color:#123f52;background:#eef6f4;border:1px solid #d8e7e1;border-radius:8px;padding:18px;text-align:center;">{escaped_code}</div>
-                <p style="font-size:15px;line-height:1.55;margin:18px 0 0;">Este codigo e valido por <strong>{ttl_minutes} minutos</strong>.</p>
-                <p style="font-size:14px;line-height:1.55;color:#5f706a;margin:12px 0 0;">Se voce nao solicitou a recuperacao, ignore esta mensagem.</p>
+                <p style="font-size:15px;line-height:1.55;margin:18px 0 0;">Este código é válido por <strong>{ttl_minutes} minutos</strong>.</p>
+                <p style="font-size:14px;line-height:1.55;color:#5f706a;margin:12px 0 0;">Se você não solicitou a recuperação, ignore esta mensagem.</p>
               </td></tr>
             </table>
           </td></tr>

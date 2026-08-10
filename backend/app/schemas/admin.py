@@ -14,11 +14,11 @@ def normalize_auth_methods(value: list[str]) -> list[str]:
     for item in value:
         method = str(item).strip().lower()
         if method not in VALID_AUTH_METHODS:
-            raise ValueError("Metodo de autenticacao invalido.")
+            raise ValueError("Método de autenticação inválido.")
         if method not in methods:
             methods.append(method)
     if not methods:
-        raise ValueError("Selecione ao menos um metodo de autenticacao.")
+        raise ValueError("Selecione ao menos um método de autenticação.")
     return methods
 
 
@@ -347,7 +347,7 @@ class MaintenanceUpdateRequest(BaseModel):
                 else:
                     start = start.replace(tzinfo=None)
             if end <= start:
-                raise ValueError("O termino da manutencao deve ser posterior ao inicio.")
+                raise ValueError("O término da manutenção deve ser posterior ao início.")
         return self
 
 

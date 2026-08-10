@@ -120,7 +120,7 @@ class EmailCodeVerify(PortalContext):
     @classmethod
     def six_digits(cls, value: str) -> str:
         if not re.fullmatch(r"\d{6}", value):
-            raise ValueError("Codigo invalido.")
+            raise ValueError("Código invalido.")
         return value
 
 

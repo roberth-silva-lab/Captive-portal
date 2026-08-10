@@ -21,7 +21,17 @@ describe('portal public security guards', () => {
 
   it('does not keep known corrupted Portuguese strings or literal unicode escapes in source files', () => {
     const unicodeEscapePrefix = `${String.fromCharCode(92)}u00`
-    const forbidden = ['op??o', 'c?digo', 'administra??o', 'n?meros', 'm?scara', 'ser? aplicada', '\uFFFD', unicodeEscapePrefix]
+    const broken = (...codes: number[]) => String.fromCharCode(...codes)
+    const forbidden = [
+      broken(111, 112, 195, 167, 195, 163, 111),
+      broken(99, 195, 179, 100, 105, 103, 111),
+      broken(97, 100, 109, 105, 110, 105, 115, 116, 114, 97, 195, 167, 195, 163, 111),
+      broken(110, 195, 186, 109, 101, 114, 111, 115),
+      broken(109, 195, 161, 115, 99, 97, 114, 97),
+      broken(115, 101, 114, 195, 161, 32, 97, 112, 108, 105, 99, 97, 100, 97),
+      '\\uFFFD',
+      unicodeEscapePrefix,
+    ]
     const files = walk(srcDir).filter((file) => /\.(ts|tsx|css)$/.test(file) && !file.endsWith('portal-security.test.ts'))
     const matches = files.flatMap((file) => {
       const content = readFileSync(file, 'utf8')

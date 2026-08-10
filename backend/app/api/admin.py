@@ -110,9 +110,9 @@ PORTAL_APPEARANCE_DEFAULTS = {
     "primary_color": "#176b87",
     "banner_text": "Portal de Acesso Wi-Fi",
     "welcome_text": "Conecte-se de forma segura a rede de visitantes.",
-    "success_message": "Acesso liberado. Voce ja pode navegar na Internet.",
-    "expired_message": "Sua sessao expirou. Autentique-se novamente para continuar usando o Wi-Fi.",
-    "terms_text": "Ao continuar, voce aceita os termos de uso da rede.",
+    "success_message": "Acesso liberado. Você já pode navegar na Internet.",
+    "expired_message": "Sua sessão expirou. Autentique-se novamente para continuar usando o Wi-Fi.",
+    "terms_text": "Ao continuar, você aceita os termos de uso da rede.",
     "auth_methods": '["voucher","cpf","email"]',
 }
 
@@ -498,7 +498,7 @@ def login(payload: AdminLoginRequest, response: Response, request: Request, db: 
     admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower(), AdminUser.is_active.is_(True)))
     if not admin or not verify_password(payload.password, admin.password_hash):
         record_attempt(db, payload.email, ip, "admin-login", False, "invalid_credentials")
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Credenciais invalidas.")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Credenciais inválidas.")
     settings = get_settings()
     if settings.require_admin_email_mfa:
         code = _six_digit_code()
@@ -506,11 +506,11 @@ def login(payload: AdminLoginRequest, response: Response, request: Request, db: 
         db.add(PasswordResetToken(admin_id=admin.id, token_hash=_admin_code_hash("admin-login", admin.id, code), expires_at=expires_at))
         text_body, html_body = admin_login_code_email(code, settings.admin_mfa_code_ttl_minutes)
         try:
-            send_email(admin.email, "Codigo de acesso ao painel", text_body, html_body)
+            send_email(admin.email, "Código de acesso ao painel", text_body, html_body)
         except EmailDeliveryError as exc:
             db.rollback()
             record_attempt(db, payload.email, ip, "admin-login", False, "smtp_error")
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Nao foi possivel enviar o codigo de verificacao agora.") from exc
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Não foi possível enviar o código de verificação agora.") from exc
         db.commit()
         record_attempt(db, payload.email, ip, "admin-login", True, "mfa_sent")
         return AdminLoginChallengeResponse(email=admin.email, expiresAt=expires_at)
@@ -527,11 +527,11 @@ def verify_admin_login_code(payload: AdminLoginCodeRequest, response: Response, 
     admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower(), AdminUser.is_active.is_(True)))
     if not admin or not verify_password(payload.password, admin.password_hash):
         record_attempt(db, payload.email, ip, "admin-login-code", False, "invalid_credentials")
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Codigo ou credenciais invalidas.")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Código ou credenciais inválidas.")
     row = db.scalar(select(PasswordResetToken).where(PasswordResetToken.admin_id == admin.id, PasswordResetToken.token_hash == _admin_code_hash("admin-login", admin.id, payload.code), PasswordResetToken.consumed_at.is_(None)).order_by(PasswordResetToken.expires_at.desc()).limit(1))
     if not row or row.expires_at <= _now_for_expires_at(row.expires_at):
         record_attempt(db, payload.email, ip, "admin-login-code", False, "invalid_code")
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Codigo ou credenciais invalidas.")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Código ou credenciais inválidas.")
     row.consumed_at = utcnow()
     _set_admin_session(admin, response, db)
     db.commit()
@@ -553,11 +553,11 @@ def forgot_admin_password(payload: AdminPasswordResetRequest, request: Request, 
     db.add(PasswordResetToken(admin_id=admin.id, token_hash=_admin_code_hash("admin-reset", admin.id, code), expires_at=expires_at))
     text_body, html_body = admin_password_reset_code_email(code, settings.admin_password_reset_ttl_minutes)
     try:
-        send_email(admin.email, "Recuperacao de senha do painel", text_body, html_body)
+        send_email(admin.email, "Recuperação de senha do painel", text_body, html_body)
     except EmailDeliveryError as exc:
         db.rollback()
         record_attempt(db, payload.email, ip, "admin-password-forgot", False, "smtp_error")
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Nao foi possivel enviar o codigo de recuperacao agora.") from exc
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Não foi possível enviar o código de recuperação agora.") from exc
     db.commit()
     record_attempt(db, payload.email, ip, "admin-password-forgot", True)
     return {"ok": True}
@@ -570,11 +570,11 @@ def reset_admin_password(payload: AdminPasswordResetConfirmRequest, request: Req
     admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower(), AdminUser.is_active.is_(True)))
     if not admin:
         record_attempt(db, payload.email, ip, "admin-password-reset", False, "invalid_code")
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Codigo invalido ou expirado.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Código inválido ou expirado.")
     row = db.scalar(select(PasswordResetToken).where(PasswordResetToken.admin_id == admin.id, PasswordResetToken.token_hash == _admin_code_hash("admin-reset", admin.id, payload.code), PasswordResetToken.consumed_at.is_(None)).order_by(PasswordResetToken.expires_at.desc()).limit(1))
     if not row or row.expires_at <= _now_for_expires_at(row.expires_at):
         record_attempt(db, payload.email, ip, "admin-password-reset", False, "invalid_code")
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Codigo invalido ou expirado.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Código inválido ou expirado.")
     row.consumed_at = utcnow()
     admin.password_hash = hash_password(payload.password)
     admin.updated_at = utcnow()
@@ -660,12 +660,12 @@ def test_system_email(payload: AdminEmailTestRequest, db: Session = Depends(get_
     text_body = (
         "Este e-mail confirma que o SMTP do Portal Wi-Fi conseguiu enviar mensagens.\n\n"
         f"Ambiente: {settings.app_env}\n"
-        "Se voce recebeu esta mensagem, o envio esta operacional."
+        "Se você recebeu esta mensagem, o envio está operacional."
     )
     html_body = (
         "<p>Este e-mail confirma que o SMTP do Portal Wi-Fi conseguiu enviar mensagens.</p>"
         f"<p><strong>Ambiente:</strong> {settings.app_env}</p>"
-        "<p>Se voce recebeu esta mensagem, o envio esta operacional.</p>"
+        "<p>Se você recebeu esta mensagem, o envio está operacional.</p>"
     )
     try:
         send_email(str(payload.email), subject, text_body, html_body)
@@ -802,14 +802,14 @@ def list_vouchers(siteId: str | None = None, db: Session = Depends(get_db), admi
 def update_voucher(voucher_id: str, payload: VoucherUpdateRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
     voucher = db.get(Voucher, voucher_id)
     if not voucher:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Voucher nao encontrado.")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Voucher não encontrado.")
     if (voucher.site_id or voucher.site) == "ALL":
         if admin.role != AdminRole.SUPERADMIN:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso ao site nao permitido.")
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso ao site não permitido.")
     else:
         ensure_site_access(db, admin, voucher.site_id or voucher.site)
     if voucher.revoked_at and payload.enabled:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Voucher revogado nao pode ser reativado.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Voucher revogado não pode ser reativado.")
     selected_site, site_name = _voucher_site_payload(db, admin, payload.siteId, payload.site)
     voucher.description = payload.description
     voucher.duration_minutes = payload.durationMinutes
@@ -835,7 +835,7 @@ def revoke_voucher(voucher_id: str, db: Session = Depends(get_db), admin: AdminU
     if voucher:
         if (voucher.site_id or voucher.site) == "ALL":
             if admin.role != AdminRole.SUPERADMIN:
-                raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso ao site nao permitido.")
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso ao site não permitido.")
         else:
             ensure_site_access(db, admin, voucher.site_id or voucher.site)
     if not voucher:
@@ -1058,9 +1058,9 @@ def list_notifications(siteId: str | None = None, db: Session = Depends(get_db),
 def update_notification(notification_id: str, payload: NotificationUpdateRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
     row = db.get(PortalNotification, notification_id)
     if not row:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Comunicado nao encontrado.")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Comunicado não encontrado.")
     if row.site == "ALL" and admin.role != AdminRole.SUPERADMIN:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso ao site nao permitido.")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso ao site não permitido.")
     if row.site != "ALL":
         ensure_site_access(db, admin, row.site)
     selected_site: str | None
@@ -1089,9 +1089,9 @@ def update_notification(notification_id: str, payload: NotificationUpdateRequest
 def delete_notification(notification_id: str, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
     row = db.get(PortalNotification, notification_id)
     if not row:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Comunicado nao encontrado.")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Comunicado não encontrado.")
     if row.site == "ALL" and admin.role != AdminRole.SUPERADMIN:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso ao site nao permitido.")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Acesso ao site não permitido.")
     if row.site != "ALL":
         ensure_site_access(db, admin, row.site)
     audit(db, admin, "notification.deleted", "notification", row.id, {"site": row.site, "type": row.type.value})
@@ -1161,7 +1161,7 @@ def list_sessions(siteId: str | None = None, q: str | None = None, status_filter
 def reveal_session_sensitive_data(session_id: str, payload: SensitiveSessionRevealRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN))):
     session = db.get(GuestSession, session_id)
     if not session:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sessao nao encontrada.")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sessão não encontrada.")
     fields = []
     email = decrypt_text(session.email_encrypted)
     cpf = decrypt_text(session.cpf_encrypted)
@@ -1297,7 +1297,7 @@ def accept_admin_invitation(payload: AdminInviteAcceptRequest, db: Session = Dep
 def update_admin_site_access(admin_id: str, payload: AdminSiteAccessUpdateRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN))):
     target = db.get(AdminUser, admin_id)
     if not target:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Administrador nao encontrado.")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Administrador não encontrado.")
     if target.role == AdminRole.SUPERADMIN:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "SUPERADMIN sempre possui acesso global.")
     replace_admin_site_access(db, target_admin_id=target.id, site_ids=payload.siteIds, site_names={}, granted_by=admin.id)
