@@ -1088,34 +1088,34 @@ function PortalSitesPanel({ sites, allowedSites, selectedSiteId, onSelectSite, o
     try {
       const current = await api<PortalSiteAppearance>(`/api/admin/portal-appearance/site/${encodeURIComponent(row.siteId)}`)
       await api<PortalSiteAppearance>(`/api/admin/portal-appearance/site/${encodeURIComponent(row.siteId)}`, { method: 'PUT', body: JSON.stringify({ ...current, siteName: current.siteName || row.name, authMethods: draftMethods }) })
-      setFeedback(`M?todos de ${row.name} salvos com sucesso.`)
-      onToast('success', 'M?todos salvos', `${row.name}: ${draftMethods.map(methodLabel).join(', ')}.`)
+      setFeedback(`Métodos de ${row.name} salvos com sucesso.`)
+      onToast('success', 'Métodos salvos', `${row.name}: ${draftMethods.map(methodLabel).join(', ')}.`)
       setEditingSiteId('')
       await onChanged()
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'N?o foi poss?vel salvar os m?todos desta unidade.'
+      const message = err instanceof Error ? err.message : 'Não foi possível salvar os métodos desta unidade.'
       setFeedback(message)
-      onToast('error', 'M?todos n?o salvos', message)
+      onToast('error', 'Métodos não salvos', message)
     } finally {
       setBusySiteId('')
     }
   }
-  return <div className="admin-content"><PageHeader title="Portais por unidade" description="Controle de forma r?pida quais m?todos aparecem para cada portal p?blico." /><section className="portal-sites-grid">{rows.map((row) => {
+  return <div className="admin-content"><PageHeader title="Portais por unidade" description="Controle de forma rápida quais métodos aparecem para cada portal público." /><section className="portal-sites-grid">{rows.map((row) => {
     const isSelected = selectedSiteId === row.siteId
     const isEditing = editingSiteId === row.siteId
     return <article className={`portal-site-card ${isSelected ? 'selected' : ''} ${isEditing ? 'editing' : ''}`} key={row.siteId}>
       <div className="portal-site-card-head"><div><strong>{row.name}</strong><span>{row.site?.status || 'Site configurado'}</span></div>{isSelected ? <b>Selecionado</b> : null}</div>
-      <div className="site-method-chips" aria-label="M?todos vis?veis">{row.authMethods.map((method) => <span key={method}>{methodLabel(method)}</span>)}</div>
-      <dl><div><dt>APs</dt><dd>{row.site?.aps ?? 0}</dd></div><div><dt>Clientes</dt><dd>{row.site?.connectedClients ?? 0}</dd></div><div><dt>Sess?es</dt><dd>{row.site?.sessions ?? 0}</dd></div></dl>
-      <div className="portal-site-actions"><button className="soft-button" type="button" onClick={() => openMethodsEditor(row)}>Editar m?todos</button><button className="soft-button" type="button" onClick={() => { onSelectSite(row.siteId); onOpenPortal('visual') }}>Visual</button><button className="soft-button" type="button" onClick={() => { onSelectSite(row.siteId); onOpenMaintenance() }}>Manuten??o</button></div>
-      {isEditing ? <div className="portal-site-method-editor" role="group" aria-label={`Editar m?todos de ${row.name}`}>
+      <div className="site-method-chips" aria-label="Métodos visíveis">{row.authMethods.map((method) => <span key={method}>{methodLabel(method)}</span>)}</div>
+      <dl><div><dt>APs</dt><dd>{row.site?.aps ?? 0}</dd></div><div><dt>Clientes</dt><dd>{row.site?.connectedClients ?? 0}</dd></div><div><dt>Sessões</dt><dd>{row.site?.sessions ?? 0}</dd></div></dl>
+      <div className="portal-site-actions"><button className="soft-button" type="button" onClick={() => openMethodsEditor(row)}>Editar métodos</button><button className="soft-button" type="button" onClick={() => { onSelectSite(row.siteId); onOpenPortal('visual') }}>Visual</button><button className="soft-button" type="button" onClick={() => { onSelectSite(row.siteId); onOpenMaintenance() }}>Manutenção</button></div>
+      {isEditing ? <div className="portal-site-method-editor" role="group" aria-label={`Editar métodos de ${row.name}`}>
         <strong>Formas de acesso exibidas para {row.name}</strong>
-        <p>Marque somente o que deve aparecer no celular do visitante. O backend tamb?m bloqueia m?todos n?o permitidos.</p>
+        <p>Marque somente o que deve aparecer no celular do visitante. O backend também bloqueia métodos não permitidos.</p>
         <div className="portal-site-method-options">{(["voucher", "cpf", "email"] as Method[]).map((method) => <label key={method} className={draftMethods.includes(method) ? 'active' : ''}><input type="checkbox" checked={draftMethods.includes(method)} disabled={draftMethods.includes(method) && draftMethods.length === 1} onChange={() => toggleDraftMethod(method)} /> <span>{methodLabel(method)}</span></label>)}</div>
-        <div className="portal-site-editor-actions"><button className="primary" type="button" onClick={() => void saveMethods(row)} disabled={busySiteId === row.siteId}>{busySiteId === row.siteId ? 'Salvando...' : 'Salvar m?todos'}</button><button className="soft-button" type="button" onClick={() => setEditingSiteId('')} disabled={busySiteId === row.siteId}>Cancelar</button></div>
+        <div className="portal-site-editor-actions"><button className="primary" type="button" onClick={() => void saveMethods(row)} disabled={busySiteId === row.siteId}>{busySiteId === row.siteId ? 'Salvando...' : 'Salvar métodos'}</button><button className="soft-button" type="button" onClick={() => setEditingSiteId('')} disabled={busySiteId === row.siteId}>Cancelar</button></div>
       </div> : null}
     </article>
-  })}</section>{feedback ? <p className={feedback.includes('sucesso') ? 'success admin-inline-feedback' : 'error admin-inline-feedback'} role="status">{feedback}</p> : null}<Panel title="Como usar" icon={<ShieldCheck />} compact><div className="portal-sites-help"><InfoTile title="Sede" value="Voucher, CPF e e-mail" detail="Clique em Editar m?todos, marque Voucher, CPF e E-mail, depois salve." icon={<Ticket />} /><InfoTile title="Esdras" value="Somente voucher" detail="Clique em Editar m?todos, deixe apenas Voucher marcado e salve." icon={<LockKeyhole />} /><InfoTile title="Seguran?a" value="Valida??o no backend" detail="Mesmo que algu?m force uma tela escondida, o backend bloqueia m?todo n?o permitido para o site." icon={<ShieldCheck />} /></div></Panel></div>
+  })}</section>{feedback ? <p className={feedback.includes('sucesso') ? 'success admin-inline-feedback' : 'error admin-inline-feedback'} role="status">{feedback}</p> : null}<Panel title="Como usar" icon={<ShieldCheck />} compact><div className="portal-sites-help"><InfoTile title="Sede" value="Voucher, CPF e e-mail" detail="Clique em Editar métodos, marque Voucher, CPF e E-mail, depois salve." icon={<Ticket />} /><InfoTile title="Esdras" value="Somente voucher" detail="Clique em Editar métodos, deixe apenas Voucher marcado e salve." icon={<LockKeyhole />} /><InfoTile title="Segurança" value="Validação no backend" detail="Mesmo que alguém force uma tela escondida, o backend bloqueia método não permitido para o site." icon={<ShieldCheck />} /></div></Panel></div>
 }
 
 function HealthStatusBadge({ value }: { value: string | boolean }) {

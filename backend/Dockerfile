@@ -5,6 +5,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system portal && useradd --system --gid portal --home /app portal
+RUN mkdir -p /data/media && chown -R portal:portal /data
 COPY requirements-prod.txt .
 RUN pip install --no-cache-dir -r requirements-prod.txt
 COPY app ./app
@@ -14,4 +15,3 @@ USER portal
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
-

@@ -3661,10 +3661,15 @@ input:focus, textarea:focus { outline: 3px solid rgba(23, 107, 135, .18); border
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  align-content: flex-start;
+  align-items: flex-start;
   margin: 8px 0;
 }
 
 .site-method-chips span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
   border: 1px solid #cfe2dd;
   border-radius: 999px;
   background: #f5faf8;
@@ -3684,6 +3689,7 @@ input:focus, textarea:focus { outline: 3px solid rgba(23, 107, 135, .18); border
 .portal-site-card {
   display: grid;
   gap: 12px;
+  align-content: start;
   border: 1px solid #d7e4e0;
   border-radius: 10px;
   background: #fff;
@@ -3777,6 +3783,7 @@ input:focus, textarea:focus { outline: 3px solid rgba(23, 107, 135, .18); border
 .portal-site-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
   gap: 8px;
 }
 

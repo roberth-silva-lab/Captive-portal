@@ -115,3 +115,22 @@ def test_admin_media_upload_rejects_large_file(client, admin_user, monkeypatch, 
         files={"file": ("logo.png", png_bytes(), "image/png")},
     )
     assert response.status_code == 413
+
+
+def test_admin_media_upload_reports_storage_permission_error(client, admin_user, monkeypatch, media_dir):
+    configure_media(monkeypatch, media_dir)
+    csrf = login_admin(client)
+
+    def deny_write(self, data):
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(Path, "write_bytes", deny_write)
+    response = client.post(
+        "/api/admin/media",
+        headers={"X-CSRF-Token": csrf},
+        data={"assetType": "maintenance"},
+        files={"file": ("maintenance.png", png_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 503
+    assert "sem permissão de escrita" in response.json()["detail"]

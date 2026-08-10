@@ -85,7 +85,18 @@ class LocalMediaStorage:
         final_path = (self.root / stored_filename).resolve()
         if self.root not in final_path.parents:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Caminho de mídia inválido.")
-        final_path.write_bytes(output.getvalue())
+        try:
+            final_path.write_bytes(output.getvalue())
+        except PermissionError as exc:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "O armazenamento de mídia está sem permissão de escrita. Verifique o volume media_data na VPS.",
+            ) from exc
+        except OSError as exc:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Não foi possível salvar a imagem no armazenamento de mídia.",
+            ) from exc
         base = self.settings.media_public_base_url.rstrip("/") or "/media"
         return StoredMedia(
             id=media_id,
