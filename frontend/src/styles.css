@@ -3696,6 +3696,11 @@ input:focus, textarea:focus { outline: 3px solid rgba(23, 107, 135, .18); border
   box-shadow: 0 16px 36px rgba(23, 107, 135, .12);
 }
 
+.portal-site-card.editing {
+  border-color: #0f7894;
+  background: #fbfefe;
+}
+
 .portal-site-card-head {
   display: flex;
   justify-content: space-between;
@@ -3773,6 +3778,68 @@ input:focus, textarea:focus { outline: 3px solid rgba(23, 107, 135, .18); border
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.portal-site-method-editor {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #cde3dc;
+  border-radius: 8px;
+  background: #f7fcfa;
+  padding: 12px;
+}
+
+.portal-site-method-editor > strong {
+  color: #17262d;
+  font-size: .98rem;
+}
+
+.portal-site-method-editor p {
+  margin: -4px 0 0;
+  color: #60726c;
+  font-size: .88rem;
+  line-height: 1.45;
+}
+
+.portal-site-method-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.portal-site-method-options label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  border: 1px solid #d6e5e0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 0 10px;
+  color: #40514b;
+  font-weight: 850;
+}
+
+.portal-site-method-options label.active {
+  border-color: #176b87;
+  background: #eaf7fa;
+  color: #0f607a;
+}
+
+.portal-site-method-options input {
+  accent-color: #176b87;
+}
+
+.portal-site-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.portal-site-editor-actions .primary,
+.portal-site-editor-actions .soft-button {
+  min-height: 40px;
+  padding: 0 12px;
 }
 
 .portal-sites-help {

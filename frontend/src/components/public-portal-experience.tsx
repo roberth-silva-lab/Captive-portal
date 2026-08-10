@@ -109,7 +109,7 @@ const text = {
   remaining: 'Tempo restante',
   emailSentTitle: 'Código enviado',
   emailSentBody: 'Enviamos um código de 6 dígitos para o e-mail informado.',
-  emailSpam: 'Verifique também sua pasta de spam.',
+  emailSpam: 'Verifique também sua pasta de spam. Se o celular estiver preso no Wi-Fi, use os dados móveis para consultar o e-mail.',
   emailCode: 'Código recebido',
   emailCodeHelp: 'Digite os 6 números. A verificação acontece automaticamente.',
 }
@@ -266,7 +266,7 @@ function MethodFields(props: PublicPortalExperienceProps & { preview: boolean; m
     const formKey = props.formInstanceKey ?? 'portal'
     return <><label className="field-label" htmlFor="visitor-name"><span>Nome completo</span><input id="visitor-name" name={`visitor-name-${formKey}`} value={props.name || ''} onChange={(event) => props.onNameChange?.(event.target.value)} autoComplete="new-password" data-lpignore="true" data-1p-ignore="true" placeholder="Digite seu nome completo" readOnly={props.preview} /></label><IdentifierField {...props} label="CPF" placeholder="000.000.000-00" inputMode="numeric" autoComplete="new-password" fieldName={`visitor-cpf-${formKey}`} /><label className="field-label" htmlFor="visitor-phone"><span>Telefone opcional</span><input id="visitor-phone" name={`visitor-phone-${formKey}`} value={props.phone || ''} onChange={(event) => props.onPhoneChange?.(event.target.value)} inputMode="tel" autoComplete="new-password" data-lpignore="true" data-1p-ignore="true" placeholder="(00) 00000-0000" readOnly={props.preview} /></label></>
   }
-  if (props.method === 'email') return <IdentifierField {...props} label="E-mail" placeholder="seu.email@exemplo.gov.br" help="Use um e-mail ao qual você tenha acesso agora." inputMode="email" autoComplete="email" />
+  if (props.method === 'email') return <IdentifierField {...props} label="E-mail" placeholder="seu.email@exemplo.gov.br" help="Use um e-mail que você consiga consultar agora, inclusive pelos dados móveis." inputMode="email" autoComplete="email" />
   return <VoucherField {...props} />
 }
 
