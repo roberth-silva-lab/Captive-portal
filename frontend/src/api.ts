@@ -26,7 +26,8 @@ const fallbackMessage = (status: number, detail?: unknown) => {
   if (status === 415) return safeDetail || 'Formato de arquivo não permitido.'
   if (status === 422) return fieldErrorMessage(detail) || safeDetail || 'Verifique os campos informados.'
   if (status === 429) return 'Muitas tentativas. Aguarde alguns minutos.'
-  if (status === 500 || status === 503) return 'O serviço está temporariamente indisponível.'
+  if (status === 503) return safeDetail || 'O serviço está temporariamente indisponível.'
+  if (status === 500) return 'O serviço está temporariamente indisponível.'
   return safeDetail || 'Não foi possível concluir a solicitação.'
 }
 

@@ -207,7 +207,7 @@ export function PublicPortalExperience(props: PublicPortalExperienceProps) {
         {flowStep === 'welcome' ? <WelcomeStep settings={props.settings} institutionName={props.institutionName} networkName={networkLabel} accepted={props.accepted} fieldError={props.fieldError} onAcceptedChange={props.onAcceptedChange} onOpenTerms={props.onOpenTerms} onSubmit={props.onSubmit} preview={preview} /> : null}
         {flowStep === 'method' ? <MethodStep {...props} method={method} networkName={networkLabel} preview={preview} /> : null}
         {flowStep === 'authorizing' ? <AuthorizationStep stage={props.stage} message={props.message} messageTone={props.messageTone} /> : null}
-        {props.stage === 'error' && props.message ? <p className="feedback error public-inline-feedback" role="status">{props.message}</p> : null}
+        {props.stage === 'error' && props.message && flowStep !== 'method' ? <p className="feedback error public-inline-feedback" role="status">{props.message}</p> : null}
         <div className="portal-footer-info"><span className="network-chip"><Wifi /> {networkLabel}</span><small>{text.protected}</small></div>
       </section>
       {props.termsOpen ? <TermsModal text={normalizeTermsText(props.settings.termsText)} onClose={props.onCloseTerms || (() => undefined)} onAccept={props.onAcceptTerms || (() => undefined)} /> : null}

@@ -175,6 +175,12 @@ describe('public portal production behavior', () => {
     expect(container.textContent).not.toContain('Acesso liberado')
   })
 
+  it('shows method errors only once on the method selection screen', () => {
+    render(<PublicPortalExperience {...baseProps} stage="error" message="O serviço está temporariamente indisponível." />)
+    const matches = container.textContent?.match(/O serviço está temporariamente indisponível\./g) ?? []
+    expect(matches).toHaveLength(1)
+  })
+
   it('starts countdown and calls window.close after confirmed success', () => {
     vi.useFakeTimers()
     const closeSpy = vi.spyOn(window, 'close').mockImplementation(() => undefined)
