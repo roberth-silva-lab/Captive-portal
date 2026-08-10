@@ -1195,6 +1195,41 @@ input:focus, textarea:focus { outline: 3px solid rgba(23, 107, 135, .18); border
   margin-bottom: 16px;
   background: #f7faf9;
 }
+
+.portal-editor-tabs,
+.auth-attempt-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.portal-editor-tabs {
+  max-width: 1440px;
+  margin: -4px auto 0;
+}
+
+.portal-editor-tabs button {
+  border: 1px solid #d7e4e0;
+  border-radius: 999px;
+  background: #fff;
+  color: #40514b;
+  min-height: 38px;
+  padding: 0 14px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.portal-editor-tabs button.active {
+  border-color: #176b87;
+  background: #eef8f6;
+  color: #075d78;
+}
+
+.settings-layout.preview-only {
+  grid-template-columns: minmax(0, 980px);
+  justify-content: center;
+}
 .portal-brand.mini {
   min-height: 92px;
   padding: 18px;
@@ -3791,6 +3826,40 @@ input:focus, textarea:focus { outline: 3px solid rgba(23, 107, 135, .18); border
   padding-right: 4px;
 }
 
+.auth-attempt-filters {
+  margin-bottom: 12px;
+}
+
+.auth-attempt-filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #526763;
+  font-size: .84rem;
+  font-weight: 850;
+}
+
+.auth-attempt-filters select {
+  min-height: 36px;
+  border: 1px solid #d7e4e0;
+  border-radius: 8px;
+  background: #fff;
+  color: #17262d;
+  padding: 0 10px;
+  font-weight: 800;
+}
+
+.auth-attempt-filters > span {
+  margin-left: auto;
+  border: 1px solid #d7e4e0;
+  border-radius: 999px;
+  background: #f8fbfa;
+  color: #526763;
+  padding: 7px 10px;
+  font-size: .8rem;
+  font-weight: 850;
+}
+
 .auth-attempt-list article {
   display: grid;
   gap: 5px;
@@ -3840,6 +3909,18 @@ input:focus, textarea:focus { outline: 3px solid rgba(23, 107, 135, .18); border
   .health-grid { grid-template-columns: 1fr; }
 
   .portal-site-card dl { grid-template-columns: 1fr; }
+
+  .auth-attempt-filters {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .auth-attempt-filters label,
+  .auth-attempt-filters select,
+  .auth-attempt-filters > span {
+    width: 100%;
+    margin-left: 0;
+  }
 }
 .refresh-button {
   border: 1px solid #d7e4e0;
