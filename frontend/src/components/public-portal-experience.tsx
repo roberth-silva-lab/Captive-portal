@@ -3,7 +3,7 @@ import type { CSSProperties, ReactNode, RefObject } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { Method, Notice, PortalAppearance, PortalSettings, PreviewDevice, PreviewState, SessionStatus, Stage } from '../types'
-import { cssVars, displayVoucher, formatClock, formatCountdown } from '../utils'
+import { cssVars, formatClock, formatCountdown } from '../utils'
 
 type PublicExperienceSettings = Pick<PortalSettings, 'logoUrl' | 'primaryColor' | 'bannerText' | 'welcomeText' | 'successMessage' | 'networkName' | 'establishmentName' | 'termsText' | 'allowedAuthMethods'>
 
@@ -141,7 +141,6 @@ const normalizeTermsText = (value?: string) => {
   return trimmed
 }
 
-const voucherDisplaySlots = (value: string) => displayVoucher(value).split('').filter(Boolean)
 const CAPTIVE_CLOSE_DELAY_SECONDS = 3
 const DEFAULT_CLOSE_REDIRECT_URL = 'https://www.gstatic.com/generate_204'
 
@@ -277,9 +276,7 @@ function EmailCodeStep(props: PublicPortalExperienceProps & { preview: boolean }
 
 function VoucherField(props: PublicPortalExperienceProps & { preview: boolean; method: Method }) {
   const value = props.preview ? previewValue('voucher', props.previewState) : props.identifier
-  const slots = voucherDisplaySlots(value)
-  const displaySlots = Array.from({ length: 12 }, (_, index) => slots[index] ?? '')
-  return <label className="field-label voucher-code-field" htmlFor="portal-voucher"><span>Voucher</span><div className={`voucher-entry ${props.fieldError === 'identifier' ? 'input-error' : ''}`}><input id="portal-voucher" value={value} onChange={(event) => props.onIdentifierChange?.(event.target.value)} inputMode="text" autoComplete="off" aria-label="Voucher" maxLength={12} readOnly={props.preview} autoFocus /><div className="voucher-slots" aria-hidden="true">{displaySlots.map((char, index) => <span key={index} className={char === '-' ? 'separator' : char ? 'filled' : ''}>{char}</span>)}</div></div><small className="field-help">Informe o código no formato RF-XXXX-XXXX.</small></label>
+  return <label className="field-label voucher-code-field" htmlFor="portal-voucher"><span>Código do voucher</span><div className={`voucher-entry ${props.fieldError === 'identifier' ? 'input-error' : ''}`}><Ticket aria-hidden="true" /><input id="portal-voucher" value={value} onChange={(event) => props.onIdentifierChange?.(event.target.value)} inputMode="text" autoCapitalize="characters" autoComplete="one-time-code" autoCorrect="off" spellCheck={false} aria-label="Código do voucher" maxLength={12} placeholder="RF-ABCD-1234" readOnly={props.preview} autoFocus />{value && !props.preview ? <button type="button" aria-label="Limpar voucher" onClick={() => props.onIdentifierChange?.('')}><X /></button> : null}</div><small className="field-help">Digite ou cole o código entregue pela equipe.</small></label>
 }
 function IdentifierField(props: PublicPortalExperienceProps & { label: string; placeholder: string; help?: string; inputMode: 'text' | 'numeric' | 'email'; autoComplete?: string; fieldName?: string; preview: boolean; method: Method }) {
   return <label className="field-label" htmlFor="portal-identifier"><span>{props.label}</span><input id="portal-identifier" name={props.fieldName || `portal-${props.method}-identifier`} data-lpignore={props.method === 'cpf' ? 'true' : undefined} data-1p-ignore={props.method === 'cpf' ? 'true' : undefined} className={props.fieldError === 'identifier' ? 'input-error' : ''} value={props.preview ? previewValue(props.method, props.previewState) : props.identifier} onChange={(event) => props.onIdentifierChange?.(event.target.value)} inputMode={props.inputMode} autoComplete={props.autoComplete || 'off'} placeholder={props.placeholder} maxLength={props.method === 'voucher' ? 39 : undefined} readOnly={props.preview} />{props.help ? <small className="field-help">{props.help}</small> : null}</label>
@@ -302,7 +299,7 @@ function AuthorizationStep({ stage, message, messageTone }: { stage: Stage; mess
 }
 
 function MaintenanceContent({ title, message, imageUrl, startsAt, endsAt }: { title: string; message: string; imageUrl?: string; startsAt?: string | null; endsAt?: string | null }) {
-  return <div className="portal-step maintenance-step">{imageUrl ? <img className="maintenance-hero-image" src={imageUrl} alt="" /> : <Clock className="hero-icon" />}<span className="portal-eyebrow">{text.status}</span><h1 id="portal-title">{title}</h1><p>{message}</p>{startsAt ? <small>{text.starts}: {formatClock(startsAt)}</small> : null}{endsAt ? <small>{text.returns}: {formatClock(endsAt)}</small> : null}<button className="soft-button" type="button" onClick={() => window.location.reload()}>{text.tryAgain}</button></div>
+  return <div className="portal-step maintenance-step">{imageUrl ? <img className="maintenance-hero-image" src={imageUrl} alt="" /> : <Clock className="hero-icon" />}<span className="portal-eyebrow">{text.status}</span><h1 id="portal-title">{title}</h1><p>{message}</p><div className="maintenance-time-list">{startsAt ? <small>{text.starts}: {formatClock(startsAt)}</small> : null}{endsAt ? <small>{text.returns}: {formatClock(endsAt)}</small> : null}</div><button className="soft-button" type="button" onClick={() => window.location.reload()}>{text.tryAgain}</button></div>
 }
 
 function NoticeList({ notices }: { notices: Notice[] }) {
