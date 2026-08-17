@@ -633,15 +633,30 @@ async def system_health(_admin: AdminUser = Depends(require_role(AdminRole.VIEWE
         unifi_error = str(exc)
     except Exception:  # noqa: BLE001
         unifi_status = "degraded"
-        unifi_error = "UniFi indisponivel."
+        unifi_error = "UniFi indisponível."
+
+    media_status = "ok"
+    media_message = ""
+    try:
+        storage = LocalMediaStorage(settings)
+        probe_path = storage.root / f".health-{secrets.token_hex(4)}"
+        probe_path.write_text("ok", encoding="utf-8")
+        probe_path.unlink(missing_ok=True)
+    except PermissionError:
+        media_status = "degraded"
+        media_message = "Armazenamento de mídia sem permissão de escrita."
+    except OSError as exc:
+        media_status = "degraded"
+        media_message = f"Armazenamento de mídia indisponível: {exc.__class__.__name__}."
 
     smtp_configured = bool(settings.smtp_host and settings.smtp_from)
-    status_value = "ok" if database_status == "ok" and schema_status == "ok" and unifi_status == "ok" and smtp_configured else "degraded"
+    status_value = "ok" if database_status == "ok" and schema_status == "ok" and unifi_status == "ok" and media_status == "ok" and smtp_configured else "degraded"
     return {
         "status": status_value,
         "database": {"status": database_status},
         "schema": {"status": schema_status, "findings": schema_findings, "alembicRevision": alembic_revision},
         "unifi": {"status": unifi_status, "sites": unifi_sites, "message": unifi_error},
+        "media": {"status": media_status, "message": media_message, "publicBaseUrl": settings.media_public_base_url},
         "smtp": {"configured": smtp_configured, "host": settings.smtp_host, "port": settings.smtp_port, "from": settings.smtp_from},
         "runtime": {
             "environment": settings.app_env,
