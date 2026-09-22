@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from datetime import timedelta
@@ -224,6 +225,17 @@ async def settings(site: str | None = None, clientMac: str | None = None, apMac:
         allowedAuthMethods=allowed_auth_methods(db, site_id),
     )
 
+async def _confirm_unifi_authorized(site_id: str, client_mac: str, *, attempts: int = 6, delay_seconds: float = 0.35):
+    last = None
+    for attempt in range(attempts):
+        last = await unifi_client.get_client_by_mac(site_id, client_mac)
+        if last.authorized:
+            return last
+        if attempt < attempts - 1:
+            await asyncio.sleep(delay_seconds)
+    raise UniFiError("UniFi não confirmou authorized=true para o cliente.")
+
+
 async def _authorize_unifi(db_or_payload, payload_or_minutes, minutes: int | None = None, data_limit_mb: int | None = None, download_limit: int | None = None, upload_limit: int | None = None, requested_site: str | None = None, auth_method: str | None = None) -> tuple[str, str]:
     db = db_or_payload if isinstance(db_or_payload, Session) else None
     payload = payload_or_minutes if db is not None else db_or_payload
@@ -241,9 +253,7 @@ async def _authorize_unifi(db_or_payload, payload_or_minutes, minutes: int | Non
             ensure_auth_method_allowed(db, context.site_id, auth_method)
         _ensure_client_not_blocked(db, client_mac=payload.clientMac, site_id=context.site_id)
     await unifi_client.authorize_guest(site_id=context.site_id, client_id=context.client_id, minutes=selected_minutes, data_limit_mb=data_limit_mb, rx_kbps=download_limit, tx_kbps=upload_limit)
-    confirmed = await unifi_client.get_client_by_mac(context.site_id, payload.clientMac)
-    if not confirmed.authorized:
-        raise UniFiError("UniFi não confirmou authorized=true para o cliente.")
+    confirmed = await _confirm_unifi_authorized(context.site_id, payload.clientMac)
     return context.site_id, confirmed.id
 
 
@@ -292,9 +302,7 @@ async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Sessio
     minutes = voucher.time_limit_minutes or voucher.duration_minutes
     try:
         await unifi_client.authorize_guest(site_id=context.site_id, client_id=context.client_id, minutes=minutes, data_limit_mb=voucher.data_limit_mb, rx_kbps=voucher.download_limit, tx_kbps=voucher.upload_limit)
-        confirmed = await unifi_client.get_client_by_mac(context.site_id, payload.clientMac)
-        if not confirmed.authorized:
-            raise UniFiError("UniFi não confirmou authorized=true para o cliente.")
+        confirmed = await _confirm_unifi_authorized(context.site_id, payload.clientMac)
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "unifi_error")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível confirmar a autorização no UniFi.") from exc
