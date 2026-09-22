@@ -116,7 +116,19 @@ POST /api/s/{site}/cmd/stamgr
 
 A autorização de visitante é confirmada consultando novamente o cliente por alguns segundos antes de considerar a sessão liberada.
 
-## 6. Hotspot Visitantes-Esdras
+## 6. Teste seguro do UniFi
+
+Antes de testar um celular, valide a conta técnica sem imprimir cookies, senhas ou payloads de dispositivos:
+
+```powershell
+cd C:\Users\RFB_OCR\Captive-portal
+$env:PYTHONPATH="$PWD\backend"
+.\backend\.venv\Scripts\python.exe .\backend\scripts\check_unifi.py
+```
+
+O resultado deve terminar em `UniFi OK` e mostrar somente contagens por site.
+
+## 7. Hotspot Visitantes-Esdras
 
 O captive portal deve ser aplicado apenas ao SSID público. Para o ambiente atual:
 
@@ -129,7 +141,7 @@ URL criptografada: desativada
 
 O painel administrativo permanece em `portal-system.gabineteitinerante.com.br`.
 
-## 7. Migração do UniFi Network Server da AWS
+## 8. Migração do UniFi Network Server da AWS
 
 Não desligue a instância AWS antes do corte concluído.
 
@@ -147,7 +159,7 @@ Sequência recomendada:
 
 Evite manter dois controladores tentando gerenciar os mesmos APs durante o corte.
 
-## 8. Manutenção
+## 9. Manutenção
 
 A manutenção pode ser global ou específica por unidade. O painel diferencia:
 
