@@ -295,18 +295,55 @@ def _audit_out(row: AuditLog) -> dict[str, Any]:
         "targetType": row.target_type,
         "siteLabel": _audit_site_label(row),
     }
-def _maintenance_state(row: MaintenanceConfig | None) -> MaintenanceAdminResponse:
+def _maintenance_state(
+    row: MaintenanceConfig | None,
+    *,
+    scope: str = "global",
+    inherited: bool = False,
+) -> MaintenanceAdminResponse:
     now = utcnow()
     if (row and row.start_at and row.start_at.tzinfo is None) or (row and row.end_at and row.end_at.tzinfo is None):
         now = now.replace(tzinfo=None)
     if not row:
-        return MaintenanceAdminResponse(maintenanceEnabled=False, maintenanceActive=False, maintenanceScheduled=False, maintenanceTitle="Portal em manutenção", maintenanceMessage="Estamos realizando ajustes para melhorar o acesso.")
+        return MaintenanceAdminResponse(
+            maintenanceEnabled=False,
+            maintenanceActive=False,
+            maintenanceScheduled=False,
+            maintenanceExpired=False,
+            maintenanceStatus="disabled",
+            maintenanceScope=scope,
+            maintenanceInherited=inherited,
+            maintenanceTitle="Portal em manutenção",
+            maintenanceMessage="Estamos realizando ajustes para melhorar o acesso.",
+        )
+
     started = row.start_at is None or row.start_at <= now
     not_ended = row.end_at is None or row.end_at > now
+    active = row.enabled and started and not_ended
+    scheduled = row.enabled and row.start_at is not None and row.start_at > now
+    expired = row.enabled and row.end_at is not None and row.end_at <= now
+    if active:
+        state = "active"
+        next_change = row.end_at
+    elif scheduled:
+        state = "scheduled"
+        next_change = row.start_at
+    elif expired:
+        state = "expired"
+        next_change = None
+    else:
+        state = "disabled"
+        next_change = None
+
     return MaintenanceAdminResponse(
         maintenanceEnabled=row.enabled,
-        maintenanceActive=row.enabled and started and not_ended,
-        maintenanceScheduled=row.enabled and row.start_at is not None and row.start_at > now,
+        maintenanceActive=active,
+        maintenanceScheduled=scheduled,
+        maintenanceExpired=expired,
+        maintenanceStatus=state,
+        maintenanceNextChangeAt=next_change,
+        maintenanceScope=scope,
+        maintenanceInherited=inherited,
         maintenanceTitle=row.title,
         maintenanceMessage=row.message,
         maintenanceStartAt=row.start_at,
@@ -987,7 +1024,15 @@ def delete_site_portal_appearance(site_id: str, db: Session = Depends(get_db), a
 @router.get("/maintenance", response_model=MaintenanceAdminResponse)
 def get_maintenance(siteId: str | None = None, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
     selected_site = ensure_site_access(db, admin, siteId, allow_all=True)
-    return _maintenance_state(db.get(MaintenanceConfig, selected_site or "global"))
+    if selected_site:
+        site_row = db.get(MaintenanceConfig, selected_site)
+        if site_row:
+            return _maintenance_state(site_row, scope=selected_site)
+        global_row = db.get(MaintenanceConfig, "global")
+        if global_row:
+            return _maintenance_state(global_row, scope="global", inherited=True)
+        return _maintenance_state(None, scope=selected_site)
+    return _maintenance_state(db.get(MaintenanceConfig, "global"), scope="global")
 
 
 @router.put("/maintenance", response_model=MaintenanceAdminResponse, dependencies=[Depends(require_csrf)])
@@ -1011,7 +1056,7 @@ def update_maintenance(payload: MaintenanceUpdateRequest, siteId: str | None = N
     audit(db, admin, "maintenance.updated", "maintenance", maintenance_id, {"siteId": selected_site, "before": before, "after": payload.model_dump(mode="json")})
     db.commit()
     db.refresh(row)
-    return _maintenance_state(row)
+    return _maintenance_state(row, scope=maintenance_id)
 
 
 
