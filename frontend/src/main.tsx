@@ -1566,6 +1566,26 @@ function MaintenanceAdminPanel({ maintenance, allowedSites, selectedSiteId, savi
   const [uploadMessage, setUploadMessage] = useState('')
   const selectedSite = allowedSites.find((site) => site.siteId === selectedSiteId)
   const scopeLabel = selectedSiteId === 'ALL' ? 'todos os sites' : selectedSite?.name || selectedSiteId
+  const maintenanceStatus = maintenance.maintenanceStatus ?? (maintenance.maintenanceActive ? 'active' : maintenance.maintenanceScheduled ? 'scheduled' : maintenance.maintenanceExpired ? 'expired' : 'disabled')
+  const statusTitle = maintenanceStatus === 'active'
+    ? 'Portal em manutenção agora'
+    : maintenanceStatus === 'scheduled'
+      ? 'Manutenção agendada'
+      : maintenanceStatus === 'expired'
+        ? 'Janela encerrada'
+        : 'Portal funcionando normalmente'
+  const statusDetail = maintenanceStatus === 'active'
+    ? (maintenance.maintenanceEndAt ? `Término previsto: ${formatClock(maintenance.maintenanceEndAt)}` : 'Ativa até ser desabilitada.')
+    : maintenanceStatus === 'scheduled'
+      ? `Início programado: ${formatClock(maintenance.maintenanceStartAt)}`
+      : maintenanceStatus === 'expired'
+        ? 'A janela terminou. Desative ou programe uma nova manutenção.'
+        : 'A manutenção pode ser imediata ou programada com início e término.'
+  const setQuickWindow = (minutes: number) => {
+    const start = new Date()
+    const end = new Date(start.getTime() + minutes * 60_000)
+    onChange({ ...maintenance, maintenanceEnabled: true, maintenanceStartAt: start.toISOString(), maintenanceEndAt: end.toISOString(), maintenanceExpired: false, maintenanceStatus: 'active' })
+  }
   const uploadMaintenanceImage = async (file: File | undefined) => {
     if (!file) return
     setUploadingImage(true)
@@ -1583,9 +1603,9 @@ function MaintenanceAdminPanel({ maintenance, allowedSites, selectedSiteId, savi
   return (
     <div className="admin-content">
       <section className="maintenance-editor" aria-labelledby="maintenance-title">
-        <div className={`maintenance-status-card ${maintenance.maintenanceEnabled ? 'active' : ''}`}>
-          <div><span>Status do portal</span><strong>{maintenance.maintenanceEnabled ? 'Portal em manutenção' : 'Portal funcionando normalmente'}</strong><p>{maintenance.maintenanceScheduled ? `Início programado: ${formatClock(maintenance.maintenanceStartAt)}` : 'A manutenção pode ser imediata ou programada com início e término.'}</p></div>
-          <label className="switch" htmlFor="maintenance-enabled"><input id="maintenance-enabled" type="checkbox" checked={maintenance.maintenanceEnabled} onChange={(event) => onChange({ ...maintenance, maintenanceEnabled: event.target.checked })} /><span aria-hidden="true" /></label>
+        <div className={`maintenance-status-card ${maintenanceStatus === 'active' ? 'active' : ''}`}>
+          <div><span>Status do portal</span><strong>{statusTitle}</strong><p>{statusDetail}</p>{maintenance.maintenanceInherited ? <small>Esta unidade está herdando a manutenção global. Ao salvar, será criado um ajuste próprio para {scopeLabel}.</small> : null}</div>
+          <label className="switch" htmlFor="maintenance-enabled"><input id="maintenance-enabled" type="checkbox" checked={maintenance.maintenanceEnabled} onChange={(event) => onChange({ ...maintenance, maintenanceEnabled: event.target.checked, maintenanceStatus: event.target.checked ? maintenance.maintenanceStatus : 'disabled' })} /><span aria-hidden="true" /></label>
         </div>
         <div className="maintenance-grid">
           <div className="panel-form">
@@ -1593,6 +1613,7 @@ function MaintenanceAdminPanel({ maintenance, allowedSites, selectedSiteId, savi
             <label htmlFor="maintenance-field-title">Título<input id="maintenance-field-title" value={maintenance.maintenanceTitle} onChange={(event) => onChange({ ...maintenance, maintenanceTitle: event.target.value })} /></label>
             <label htmlFor="maintenance-field-message">Mensagem<textarea id="maintenance-field-message" value={maintenance.maintenanceMessage} onChange={(event) => onChange({ ...maintenance, maintenanceMessage: event.target.value })} rows={5} /></label>
             <div className="date-grid"><label htmlFor="maintenance-start">Início<input id="maintenance-start" type="datetime-local" value={datetimeLocal(maintenance.maintenanceStartAt)} onChange={(event) => onChange({ ...maintenance, maintenanceStartAt: fromDatetimeLocal(event.target.value) })} /></label><label htmlFor="maintenance-end">Término<input id="maintenance-end" type="datetime-local" value={datetimeLocal(maintenance.maintenanceEndAt)} onChange={(event) => onChange({ ...maintenance, maintenanceEndAt: fromDatetimeLocal(event.target.value) })} /></label></div>
+            <div className="media-inline-control compact"><button className="soft-button" type="button" onClick={() => setQuickWindow(30)}>Agora · 30 min</button><button className="soft-button" type="button" onClick={() => setQuickWindow(60)}>Agora · 1 h</button><button className="soft-button" type="button" onClick={() => onChange({ ...maintenance, maintenanceStartAt: null, maintenanceEndAt: null, maintenanceExpired: false })}>Limpar agenda</button></div>
             <div className="maintenance-image-picker"><div><strong>Imagem da manutenção</strong><span>Use uma imagem institucional, como o leão, brasão ou aviso visual. PNG, JPG ou WebP.</span></div><label className="maintenance-upload-card" htmlFor="maintenance-image-upload">{maintenance.maintenanceImageUrl ? <img src={maintenance.maintenanceImageUrl} alt="Preview da imagem de manutenção" /> : <span><Clock />Selecionar imagem</span>}</label><input id="maintenance-image-upload" className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void uploadMaintenanceImage(event.target.files?.[0])} disabled={uploadingImage} /><div className="media-inline-control compact"><label className="soft-button" htmlFor="maintenance-image-upload">{uploadingImage ? 'Enviando...' : maintenance.maintenanceImageUrl ? 'Trocar imagem' : 'Selecionar imagem'}</label>{maintenance.maintenanceImageUrl ? <button className="soft-button" type="button" onClick={() => onChange({ ...maintenance, maintenanceImageUrl: '' })}>Remover imagem</button> : null}</div><label className="maintenance-url-field" htmlFor="maintenance-image">URL da imagem<input id="maintenance-image" value={maintenance.maintenanceImageUrl} onChange={(event) => onChange({ ...maintenance, maintenanceImageUrl: event.target.value })} placeholder="/media/..." /></label>{uploadMessage ? <p className={uploadMessage.includes('Não') ? 'error' : 'panel-note'} role="status">{uploadMessage}</p> : null}</div>
             <button className="primary admin-save" type="button" onClick={onSave} disabled={saving}>{saving ? 'Salvando...' : 'Salvar alterações'}</button>
             {feedback ? <p className={feedback.includes('sucesso') ? 'success' : 'error'} role="status">{feedback}</p> : null}
