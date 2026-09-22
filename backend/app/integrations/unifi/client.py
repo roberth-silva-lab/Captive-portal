@@ -125,7 +125,7 @@ class UniFiClient:
         self.cache_ttl_seconds = settings.unifi_cache_ttl_seconds
         self._cache: dict[tuple[str, str], tuple[float, dict | list]] = {}
         self._legacy_logged_in = False
-        self._csrf_token = ""
+        self._csrf_token: str | None = None
         headers = {"Accept": "application/json"}
         if self.auth_mode == "integration":
             headers["X-API-Key"] = settings.unifi_api_key
