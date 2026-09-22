@@ -355,6 +355,11 @@ class MaintenanceAdminResponse(BaseModel):
     maintenanceEnabled: bool
     maintenanceActive: bool
     maintenanceScheduled: bool
+    maintenanceExpired: bool = False
+    maintenanceStatus: str = "disabled"
+    maintenanceNextChangeAt: datetime | None = None
+    maintenanceScope: str = "global"
+    maintenanceInherited: bool = False
     maintenanceTitle: str
     maintenanceMessage: str
     maintenanceStartAt: datetime | None = None
