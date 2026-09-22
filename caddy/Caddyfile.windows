@@ -8,6 +8,12 @@
     }
     redir @adminRoot /admin/login 302
 
+    @publicAdmin {
+        host portal.gabineteitinerante.com.br
+        path /admin*
+    }
+    redir @publicAdmin https://portal-system.gabineteitinerante.com.br{uri} 302
+
     handle /api/* {
         reverse_proxy 127.0.0.1:8000
     }
