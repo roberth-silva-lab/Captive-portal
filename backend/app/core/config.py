@@ -1,5 +1,6 @@
 from functools import lru_cache
 import ipaddress
+from pathlib import Path
 from urllib.parse import urlparse
 
 from pydantic import Field
@@ -7,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 INSECURE_MARKERS = {"", "changeme", "change-me", "troque-aqui", "default", "secret"}
 VALID_UNIFI_AUTH_MODES = {"integration", "legacy"}
+ROOT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
 
 
 def _is_local_or_private_url(value: str) -> bool:
@@ -21,7 +23,7 @@ def _is_local_or_private_url(value: str) -> bool:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=str(ROOT_ENV_FILE), env_file_encoding="utf-8", extra="ignore")
 
     app_env: str = Field(default="development", validation_alias="APP_ENV")
     debug: bool = Field(default=False, validation_alias="DEBUG")
