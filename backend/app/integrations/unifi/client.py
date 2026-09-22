@@ -288,14 +288,17 @@ class UniFiClient:
     async def list_clients(self, site_id: str, mac: str | None = None) -> list[dict[str, Any]]:
         if self.is_legacy:
             path = f"/api/s/{site_id}/stat/sta"
+            legacy_payload: dict | list | None
             if mac:
-                payload = await self._legacy_request("GET", path)
+                legacy_payload = await self._legacy_request("GET", path)
             else:
                 key = ("GET", path)
-                payload = self._cached(key)
-                if payload is None:
-                    payload = self._remember(key, await self._legacy_request("GET", path))
-            rows = self._rows(payload)
+                legacy_payload = self._cached(key)
+                if legacy_payload is None:
+                    legacy_payload = self._remember(key, await self._legacy_request("GET", path))
+            if legacy_payload is None:
+                raise UniFiError("UniFi returned no legacy client payload.")
+            rows = self._rows(legacy_payload)
             if mac:
                 wanted = _mac(mac)
                 return [row for row in rows if _client_mac(row) == wanted]
