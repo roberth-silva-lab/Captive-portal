@@ -386,3 +386,23 @@ def admin_reactivation_result_email(name: str, approved: bool, note: str = "") -
     </body></html>
     """
     return text, html_body
+
+
+def admin_invitation_revoked_email(name: str) -> tuple[str, str]:
+    text = (
+        "Portal Wi-Fi - Convite cancelado\n\n"
+        f"Olá, {name}.\n\n"
+        "O convite administrativo enviado anteriormente foi cancelado e não pode mais ser utilizado.\n"
+        "Se você ainda precisar de acesso, aguarde um novo convite da equipe responsável."
+    )
+    html_body = f"""
+    <!doctype html><html lang="pt-BR"><body style="margin:0;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#1f2d33;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;"><tr><td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#fff;border:1px solid #dce7e3;border-radius:10px;overflow:hidden;">
+          <tr><td style="background:#7b4b32;color:#fff;padding:22px 24px;"><strong>Portal Wi-Fi</strong><div style="font-size:22px;font-weight:700;margin-top:4px;">Convite cancelado</div></td></tr>
+          <tr><td style="padding:26px 24px;"><h1 style="font-size:20px;">Olá, {html.escape(name)}</h1><p>O convite administrativo enviado anteriormente foi cancelado e não pode mais ser utilizado.</p><p style="color:#5f706a;font-size:14px;">Se você ainda precisar de acesso, aguarde um novo convite da equipe responsável.</p></td></tr>
+        </table>
+      </td></tr></table>
+    </body></html>
+    """
+    return text, html_body
