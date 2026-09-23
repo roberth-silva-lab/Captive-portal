@@ -330,7 +330,7 @@ async def auth_cpf(payload: CpfAuthRequest, request: Request, db: Session = Depe
 @router.post("/auth/email/request-code")
 async def request_email_code(payload: EmailCodeRequest, request: Request, db: Session = Depends(get_db)):
     ip = client_ip(request)
-    enforce_rate_limit(db, payload.clientMac, ip, "email")
+    enforce_rate_limit(db, payload.email.lower(), ip, "email", max_attempts=8, include_successes=True)
     try:
         context = await unifi_client.resolve_client_context(client_mac=payload.clientMac, ap_mac=payload.apMac, requested_site=None)
         ensure_not_in_maintenance(db, context.site_id)
@@ -391,7 +391,7 @@ async def verify_email_code(payload: EmailCodeVerify, request: Request, db: Sess
 
 async def _provisional(payload: ProvisionalAccessRequest, request: Request, db: Session, method: str, minutes: int):
     ip = client_ip(request)
-    enforce_rate_limit(db, payload.clientMac, ip, method, max_attempts=8)
+    enforce_rate_limit(db, payload.clientMac, ip, method, max_attempts=8, include_successes=True)
     try:
         site_id, client_id = await _authorize_unifi(db, payload, minutes)
     except UniFiError as exc:
