@@ -39,7 +39,7 @@ const safeSidebarStorageSet = (value: boolean) => {
   }
 }
 
-export function AdminSidebar({ active, open, onClose, onSelect }: { active: AdminSection; open: boolean; onClose: () => void; onSelect: (section: AdminSection) => void }) {
+export function AdminSidebar({ admin, active, open, onClose, onSelect }: { admin: AdminMe | null; active: AdminSection; open: boolean; onClose: () => void; onSelect: (section: AdminSection) => void }) {
   const [collapsed, setCollapsed] = useState(safeSidebarStorageGet)
   const groups: Array<{ label: string; items: Array<{ id: AdminSection; label: string; icon: ReactNode }> }> = [
     { label: 'Visão geral', items: [{ id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard /> }] },
@@ -48,6 +48,12 @@ export function AdminSidebar({ active, open, onClose, onSelect }: { active: Admi
     { label: 'Comunicação', items: [{ id: 'portal-sites', label: 'Portais por unidade', icon: <MapPinned /> }, { id: 'portal', label: 'Portal público', icon: <Palette /> }, { id: 'notices', label: 'Avisos', icon: <Megaphone /> }, { id: 'maintenance', label: 'Manutenção', icon: <Clock /> }] },
     { label: 'Administração', items: [{ id: 'admins', label: 'Administradores', icon: <UserCog /> }, { id: 'audit', label: 'Auditoria', icon: <History /> }, { id: 'health', label: 'Saúde', icon: <Activity /> }, { id: 'settings', label: 'Minha conta', icon: <Settings /> }] },
   ]
+  const role = admin?.role || 'VIEWER'
+  const hiddenForRole = (section: AdminSection) => {
+    if (section === 'admins') return role !== 'SUPERADMIN'
+    if (['audit', 'health'].includes(section)) return role === 'VIEWER'
+    return false
+  }
   const toggleCollapsed = () => {
     const next = !collapsed
     setCollapsed(next)
@@ -60,7 +66,7 @@ export function AdminSidebar({ active, open, onClose, onSelect }: { active: Admi
         <button className="sidebar-close" type="button" aria-label="Fechar menu" onClick={onClose}><X /></button>
         <button className="collapse-button" type="button" aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'} onClick={toggleCollapsed}>{collapsed ? '>' : '<'}</button>
         <nav className="sidebar-nav">
-          {groups.map((group) => <div className="nav-group" key={group.label}><span className="nav-group-label">{group.label}</span>{group.items.map((item) => <button key={item.id} title={collapsed ? item.label : undefined} className={`nav-item ${active === item.id ? 'active' : ''}`} type="button" onClick={() => onSelect(item.id)} aria-current={active === item.id ? 'page' : undefined}>{item.icon}<span>{item.label}</span></button>)}</div>)}
+          {groups.map((group) => <div className="nav-group" key={group.label}><span className="nav-group-label">{group.label}</span>{group.items.filter((item) => !hiddenForRole(item.id)).map((item) => <button key={item.id} title={collapsed ? item.label : undefined} className={`nav-item ${active === item.id ? 'active' : ''}`} type="button" onClick={() => onSelect(item.id)} aria-current={active === item.id ? 'page' : undefined}>{item.icon}<span>{item.label}</span></button>)}</div>)}
         </nav>
       </aside>
       {open ? <button className="sidebar-backdrop" type="button" aria-label="Fechar menu" onClick={onClose} /> : null}
