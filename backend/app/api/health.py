@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import inspect, text
 
@@ -13,6 +13,7 @@ EXPECTED_COLUMNS = {
         "code_hash",
         "code_label",
         "duration_minutes",
+        "unlimited_duration",
         "description",
         "created_by",
         "revoked_at",
@@ -23,7 +24,7 @@ EXPECTED_COLUMNS = {
     "admin_invitations": {"id", "email", "token_hash", "role", "permitted_site_ids_json"},
     "admin_site_access": {"id", "admin_id", "site_id"},
     "portal_site_settings": {"id", "site_id", "site_name", "display_name", "enabled", "auth_methods_json", "updated_at"},
-    "guest_sessions": {"id", "status", "client_mac", "site", "unifi_client_id", "ended_at", "ended_by", "admin_end_reason", "reauth_required_at"},
+    "guest_sessions": {"id", "status", "client_mac", "site", "unifi_client_id", "unlimited_access", "unifi_refresh_at", "ended_at", "ended_by", "admin_end_reason", "reauth_required_at"},
     "access_blocks": {"id", "site_id", "scope", "device_mac_hash", "reason", "created_by", "revoked_at"},
 }
 
@@ -48,7 +49,11 @@ def live():
 
 
 @router.get("/health/ready")
-def ready():
+def ready(request: Request):
+    public_host = (request.url.hostname or "").lower() in {
+        "portal.gabineteitinerante.com.br",
+        "portal-system.gabineteitinerante.com.br",
+    }
     try:
         with engine.connect() as conn:
             conn.execute(text("select 1"))
@@ -60,8 +65,11 @@ def ready():
             if "alembic_version" in tables:
                 current_revision = conn.execute(text("select version_num from alembic_version limit 1")).scalar_one_or_none()
     except Exception:  # noqa: BLE001
-        return JSONResponse(status_code=503, content={"status": "degraded", "database": "unavailable"})
+        content = {"status": "degraded"} if public_host else {"status": "degraded", "database": "unavailable"}
+        return JSONResponse(status_code=503, content=content)
     if findings:
+        if public_host:
+            return JSONResponse(status_code=503, content={"status": "degraded"})
         return JSONResponse(
             status_code=503,
             content={
@@ -72,6 +80,8 @@ def ready():
                 "alembicRevision": current_revision,
             },
         )
+    if public_host:
+        return {"status": "ok"}
     return {"status": "ok", "database": "ok", "schema": "ok", "alembicRevision": current_revision}
 
 

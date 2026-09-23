@@ -1,6 +1,7 @@
 from app.models.entities import (
     AccessBlock,
     AdminInvitation,
+    AdminReactivationRequest,
     AdminRole,
     AdminSession,
     AdminSiteAccess,
@@ -24,6 +25,7 @@ from app.models.entities import (
 
 __all__ = [
     "AdminInvitation",
+    "AdminReactivationRequest",
     "AdminRole",
     "AdminSession",
     "AdminSiteAccess",

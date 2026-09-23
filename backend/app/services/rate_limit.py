@@ -23,16 +23,26 @@ def record_attempt(db: Session, identifier: str, ip: str, method: str, success: 
     db.commit()
 
 
-def enforce_rate_limit(db: Session, identifier: str, ip: str, method: str, max_attempts: int | None = None) -> None:
+def enforce_rate_limit(
+    db: Session,
+    identifier: str,
+    ip: str,
+    method: str,
+    max_attempts: int | None = None,
+    *,
+    include_successes: bool = False,
+) -> None:
     settings = get_settings()
     cutoff = utcnow() - timedelta(seconds=settings.rate_limit_window_seconds)
     limit = max_attempts or settings.rate_limit_max_attempts
-    stmt = select(func.count(AuthAttempt.id)).where(
+    conditions = [
         AuthAttempt.created_at >= cutoff,
         AuthAttempt.method == method,
-        AuthAttempt.success.is_(False),
         (AuthAttempt.identifier_hash == secret_hash(identifier)) | (AuthAttempt.ip_hash == secret_hash(ip)),
-    )
-    failures = db.execute(stmt).scalar_one()
-    if failures >= limit:
+    ]
+    if not include_successes:
+        conditions.append(AuthAttempt.success.is_(False))
+    stmt = select(func.count(AuthAttempt.id)).where(*conditions)
+    attempts = db.execute(stmt).scalar_one()
+    if attempts >= limit:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Muitas tentativas. Aguarde e tente novamente.")

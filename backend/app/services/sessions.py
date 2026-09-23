@@ -39,8 +39,9 @@ def authorize_session(
     ssid: str = "",
     site: str = "",
     method: AuthorizationMethod,
-    minutes: int,
+    minutes: int | None,
     unifi_client_id: str,
+    unlimited: bool = False,
     name: str = "",
     email: str = "",
     cpf: str = "",
@@ -58,7 +59,9 @@ def authorize_session(
         status=SessionStatus.AUTHORIZED,
         created_at=now,
         authorized_at=now,
-        expires_at=now + timedelta(minutes=minutes),
+        expires_at=None if unlimited else now + timedelta(minutes=minutes or 0),
+        unlimited_access=unlimited,
+        unifi_refresh_at=now if unlimited else None,
         terms_accepted_at=now,
         unifi_client_id=unifi_client_id,
         name=name,
@@ -99,7 +102,13 @@ def dashboard_counts(db: Session, site_ids: list[str] | None = None) -> dict:
     def count_since(days: int) -> int:
         return db.execute(select(func.count(GuestSession.id)).where(GuestSession.created_at >= now - timedelta(days=days), *site_filter)).scalar_one()
 
-    active = db.execute(select(func.count(GuestSession.id)).where(GuestSession.status == SessionStatus.AUTHORIZED, GuestSession.expires_at > now, *site_filter)).scalar_one()
+    active = db.execute(
+        select(func.count(GuestSession.id)).where(
+            GuestSession.status == SessionStatus.AUTHORIZED,
+            or_(GuestSession.unlimited_access.is_(True), GuestSession.expires_at > now),
+            *site_filter,
+        )
+    ).scalar_one()
     avg_duration = db.execute(select(func.coalesce(func.avg(GuestSession.duration_seconds), 0)).where(*site_filter)).scalar_one()
     devices = db.execute(select(func.count(func.distinct(GuestSession.client_mac))).where(*site_filter)).scalar_one()
     expired = db.execute(select(func.count(GuestSession.id)).where(GuestSession.status == SessionStatus.EXPIRED, *site_filter)).scalar_one()

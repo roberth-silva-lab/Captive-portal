@@ -5,7 +5,11 @@ import pytest
 from app.integrations.unifi import UniFiClientRecord, UniFiError
 from app.models import AuditLog, AuthorizationMethod, GuestSession, SessionStatus
 from app.models.entities import utcnow
-from app.services.session_expirer import expire_due_sessions_with_unifi
+from app.services.session_expirer import (
+    UNLIMITED_UNIFI_GRANT_MINUTES,
+    expire_due_sessions_with_unifi,
+    refresh_unlimited_sessions_with_unifi,
+)
 
 
 class FakeUnauthorizer:
@@ -13,6 +17,7 @@ class FakeUnauthorizer:
         self.clients = list(clients or [])
         self.unauthorize_errors = list(unauthorize_errors or [])
         self.calls = []
+        self.authorize_calls = []
         self.lookups = []
 
     async def get_current_client(self, *, site_id: str, client_mac: str):
@@ -28,6 +33,10 @@ class FakeUnauthorizer:
         self.calls.append((site_id, client_id))
         if self.unauthorize_errors:
             raise self.unauthorize_errors.pop(0)
+        return {"ok": True}
+
+    async def authorize_guest(self, *, site_id: str, client_id: str, minutes: int):
+        self.authorize_calls.append((site_id, client_id, minutes))
         return {"ok": True}
 
 
@@ -223,4 +232,44 @@ async def test_expire_due_legacy_session_without_site_expires_locally():
     assert result.expired == 1
     assert result.skipped_missing_unifi_context == 1
     assert session.status == SessionStatus.EXPIRED
+    db.close()
+
+@pytest.mark.asyncio
+async def test_refresh_unlimited_session_renews_rolling_unifi_grant():
+    from app.core.database import SessionLocal
+
+    now = utcnow()
+    db = SessionLocal()
+    session = GuestSession(
+        client_mac="aa:bb:cc:dd:ee:90",
+        site="site-esdras",
+        unifi_client_id="client-unlimited",
+        authorization_method=AuthorizationMethod.VOUCHER,
+        status=SessionStatus.AUTHORIZED,
+        authorized_at=now - timedelta(days=3),
+        expires_at=None,
+        unlimited_access=True,
+        unifi_refresh_at=now - timedelta(hours=13),
+    )
+    db.add(session)
+    db.commit()
+
+    fake = FakeUnauthorizer(
+        clients=[
+            client_record("client-unlimited", True, mac="aa:bb:cc:dd:ee:90"),
+            client_record("client-unlimited", True, mac="aa:bb:cc:dd:ee:90"),
+        ]
+    )
+
+    result = await refresh_unlimited_sessions_with_unifi(db, fake)
+    db.refresh(session)
+
+    assert result.renewed_unlimited == 1
+    assert result.failed_unlimited == 0
+    assert fake.authorize_calls == [
+        ("site-esdras", "client-unlimited", UNLIMITED_UNIFI_GRANT_MINUTES)
+    ]
+    assert session.expires_at is None
+    assert session.unlimited_access is True
+    assert session.unifi_refresh_at is not None
     db.close()

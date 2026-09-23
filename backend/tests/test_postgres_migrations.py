@@ -28,10 +28,18 @@ def test_postgresql_migrations_reach_head_and_match_required_columns(monkeypatch
             inspector = inspect(conn)
             admin_columns = {column["name"] for column in inspector.get_columns("admin_users")}
             voucher_columns = {column["name"] for column in inspector.get_columns("vouchers")}
+            session_columns = {column["name"] for column in inspector.get_columns("guest_sessions")}
+            admin_columns = {column["name"] for column in inspector.get_columns("admin_users")}
+            admin_session_columns = {column["name"] for column in inspector.get_columns("admin_sessions")}
+            support_columns = {column["name"] for column in inspector.get_columns("admin_reactivation_requests")}
     finally:
         engine.dispose()
 
-    assert current == "20260730_0003"
+    assert current == "20260923_0008"
     assert {"id", "email", "name", "password_hash", "role", "is_active", "created_at", "updated_at"}.issubset(admin_columns)
-    assert {"description", "created_by", "revoked_at", "revoked_by", "site_id", "site_name_snapshot"}.issubset(voucher_columns)
+    assert {"description", "created_by", "revoked_at", "revoked_by", "site_id", "site_name_snapshot", "unlimited_duration"}.issubset(voucher_columns)
+    assert {"unlimited_access", "unifi_refresh_at"}.issubset(session_columns)
+    assert {"failed_login_attempts", "locked_at", "suspended_at", "suspended_reason", "last_login_at", "last_seen_at"}.issubset(admin_columns)
+    assert {"last_seen_at"}.issubset(admin_session_columns)
+    assert {"admin_id", "message", "status", "requested_at", "reviewed_at", "reviewed_by", "resolution_note"}.issubset(support_columns)
     assert {"description", "created_by", "revoked_at", "revoked_by"}.isdisjoint(admin_columns)

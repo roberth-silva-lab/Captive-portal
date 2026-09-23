@@ -2,7 +2,7 @@
 
 Este repositório contém a aplicação de Captive Portal externo para redes UniFi do Gabinete Itinerante.
 
-A solução possui uma interface pública para visitantes e uma interface administrativa separada por hostname. As duas entradas podem apontar para a mesma EC2, passam pelo mesmo proxy HTTPS e compartilham o mesmo backend FastAPI.
+A solução possui uma interface pública para visitantes e uma interface administrativa separada por hostname. As duas entradas podem apontar para a mesma instalação local, passam pelo mesmo proxy e compartilham o mesmo backend FastAPI. O ambiente do Posto Esdras usa Windows, Cloudflare Tunnel e Neon.
 
 ## Objetivo
 
@@ -14,7 +14,7 @@ A experiência foi pensada para Android, iPhone e computador, incluindo as janel
 
 - Autenticação por voucher, CPF ou email.
 - Aceite obrigatório dos termos de uso antes da autorização.
-- Autorização de visitantes pela UniFi Network Integration API.
+- Autorização de visitantes pela UniFi Network Integration API ou pela API clássica do UniFi Network Server.
 - Confirmação real de `authorized=true` antes da tela de sucesso.
 - Tela final curta com fallback para continuar navegando.
 - Acompanhamento de sessão com autorização, expiração, tempo total e tempo restante.
@@ -38,7 +38,7 @@ flowchart TD
   Proxy --> Frontend[Frontend React]
   Proxy -->|/api| FastAPI[Backend FastAPI]
   FastAPI --> Database[(PostgreSQL)]
-  FastAPI --> UniFi[UniFi OS Server]
+  FastAPI --> UniFi[UniFi Network Server]
 ```
 
 ## Fluxo do Captive Portal
@@ -52,7 +52,7 @@ flowchart TD
   Redirect --> Portal[Interface publica]
   Portal --> Auth[Voucher / CPF / Email]
   Auth --> API[Backend FastAPI]
-  API --> UniFiAPI[UniFi Integration API]
+  API --> UniFiAPI[Adaptador UniFi: Integration ou Legacy]
   UniFiAPI --> Confirmacao[authorized=true]
   Confirmacao --> Internet[Internet liberada]
 ```
@@ -122,7 +122,7 @@ O arquivo `.env` real pertence ao ambiente de execução e não deve ser version
 
 ## Execução
 
-O ambiente de produção roda com Docker Compose. O proxy HTTPS publica as portas externas e os serviços internos permanecem isolados na rede da aplicação.
+O projeto suporta Docker Compose e também execução local no Windows. No Posto Esdras, FastAPI e Caddy rodam como serviços do Windows em loopback e o acesso externo entra exclusivamente pelo Cloudflare Tunnel.
 
 Fluxo operacional esperado:
 
@@ -162,11 +162,9 @@ npm audit --audit-level=high
 
 ## Integração UniFi
 
-A integração com UniFi usa API key pela UniFi Network Integration API. O backend consulta sites e clientes, executa a ação de autorização e consulta novamente o estado do cliente antes de concluir a sessão como liberada.
+A integração UniFi possui dois modos: `integration`, usando API key da Network Integration API, e `legacy`, usando uma conta técnica local, cookie de sessão e os endpoints clássicos do UniFi Network Server. Em ambos os casos o backend consulta novamente o cliente antes de concluir a sessão como liberada.
 
-A autorização de visitantes envia apenas campos documentados pela API oficial, como tempo de acesso, limite de dados e limites de velocidade. Regras administrativas de voucher, como quantidade máxima de dispositivos, site, validade e status ativo, são aplicadas pelo próprio portal e registradas no banco de dados.
-
-Parâmetros não documentados não devem ser enviados ao UniFi.
+No modo `integration`, a autorização usa os campos da API oficial. No modo `legacy`, o adaptador traduz tempo, limites de dados e velocidade para o comando clássico de autorização de guest. Regras administrativas de voucher, como quantidade máxima de dispositivos, site, validade e status ativo, continuam sendo aplicadas pelo próprio portal e registradas no banco.
 
 ## Prontidão Para Produção
 
@@ -179,3 +177,7 @@ Também fazem parte da prontidão: backend isolado da Internet, grupo de seguran
 Health checks indicam a disponibilidade básica da aplicação e a prontidão das dependências. Falhas de prontidão normalmente estão relacionadas a banco, variáveis de ambiente ou integração externa.
 
 A janela captive portal é controlada pelo sistema operacional do dispositivo. Depois da confirmação de acesso, o portal mostra uma tela curta de sucesso e oferece fallback manual para continuar navegando caso Android ou iOS não dispensem a janela automaticamente.
+
+## Windows / Posto Esdras
+
+A implantação local, serviços automáticos, configuração do modo UniFi legado e roteiro de migração da AWS estão documentados em `docs/WINDOWS_ESDRAS.md`.

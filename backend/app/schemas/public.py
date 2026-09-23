@@ -75,6 +75,16 @@ class ProvisionalAccessRequest(BaseModel):
         return normalize_mac(value) if value else None
 
 
+class SessionControlRequest(BaseModel):
+    clientMac: str = Field(validation_alias=AliasChoices("clientMac", "mac"))
+    sessionId: str = Field(min_length=8, max_length=64)
+
+    @field_validator("clientMac")
+    @classmethod
+    def valid_client_mac(cls, value: str) -> str:
+        return normalize_mac(value)
+
+
 class VoucherAuthRequest(PortalContext):
     code: str = Field(min_length=3, max_length=64, validation_alias=AliasChoices("code", "voucher_code", "voucherCode"))
 
@@ -149,9 +159,10 @@ class MaintenanceResponse(BaseModel):
 class AuthResponse(BaseModel):
     ok: bool = True
     sessionId: str
-    sessionMinutes: int
+    sessionMinutes: int | None = None
+    unlimited: bool = False
     authorizedAt: datetime
-    expiresAt: datetime
+    expiresAt: datetime | None = None
     remainingSeconds: int
     totalSeconds: int
     authorized: bool = True
@@ -166,7 +177,8 @@ class SessionStatusResponse(BaseModel):
     serverNow: datetime
     remainingSeconds: int
     remainingMinutes: int
-    sessionMinutes: int
+    sessionMinutes: int | None = None
+    unlimited: bool = False
     totalSeconds: int = 0
     networkName: str = ""
     establishmentName: str = ""

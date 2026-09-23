@@ -13,14 +13,23 @@ from app.core.config import get_settings
 from app.core.database import engine, get_db
 from app.integrations.email.service import (
     EmailDeliveryError,
+    admin_access_change_email,
     admin_invitation_email,
+    admin_invitation_revoked_email,
     admin_login_code_email,
+    admin_login_throttle_email,
     admin_password_reset_code_email,
+    admin_reactivation_alert_email,
+    admin_reactivation_request_email,
+    admin_reactivation_result_email,
+    admin_suspension_email,
     send_email,
+    voucher_email,
 )
 from app.integrations.unifi import UniFiError, unifi_client
 from app.models import (
     AdminInvitation,
+    AdminReactivationRequest,
     AdminRole,
     AdminSession,
     AdminSiteAccess,
@@ -51,7 +60,12 @@ from app.schemas.admin import (
     AdminMe,
     AdminPasswordResetConfirmRequest,
     AdminPasswordResetRequest,
+    AdminReactivationRequestCreate,
+    AdminReactivationRequestResponse,
+    AdminReactivationReviewRequest,
+    AdminRoleUpdateRequest,
     AdminSiteAccessUpdateRequest,
+    AdminStatusUpdateRequest,
     AllowedSiteResponse,
     AuthAttemptResponse,
     CreatedVoucherCode,
@@ -262,6 +276,72 @@ def audit(db: Session, admin: AdminUser, event: str, target_type: str, target_id
     db.add(AuditLog(actor_id=admin.id, event=event, target_type=target_type, target_id=target_id, metadata_json=json.dumps(metadata or {}, separators=(",", ":"))))
 
 
+def _revoke_admin_sessions(db: Session, admin_id: str) -> None:
+    revoked_at = utcnow()
+    sessions = db.scalars(
+        select(AdminSession).where(
+            AdminSession.admin_id == admin_id,
+            AdminSession.revoked_at.is_(None),
+        )
+    ).all()
+    for row in sessions:
+        row.revoked_at = revoked_at
+
+
+def _send_email_quietly(to_email: str, subject: str, text_body: str, html_body: str) -> bool:
+    try:
+        send_email(to_email, subject, text_body, html_body)
+        return True
+    except EmailDeliveryError:
+        return False
+
+
+def _notify_active_reviewers(db: Session, subject: str, text_body: str, html_body: str) -> None:
+    reviewers = db.scalars(
+        select(AdminUser).where(
+            AdminUser.role == AdminRole.SUPERADMIN,
+            AdminUser.is_active.is_(True),
+        )
+    ).all()
+    for reviewer in reviewers:
+        _send_email_quietly(reviewer.email, subject, text_body, html_body)
+
+
+def _suspend_admin(
+    db: Session,
+    target: AdminUser,
+    *,
+    reason: str,
+    suspended_by: str,
+    automatic: bool,
+) -> None:
+    now = utcnow()
+    target.is_active = False
+    target.suspended_at = now
+    target.suspended_reason = reason
+    target.suspended_by = suspended_by
+    if automatic:
+        target.locked_at = now
+    _revoke_admin_sessions(db, target.id)
+    text_body, html_body = admin_suspension_email(target.name, reason, automatic=automatic)
+    _send_email_quietly(target.email, "Acesso administrativo temporariamente suspenso", text_body, html_body)
+
+
+def _reactivation_out(row: AdminReactivationRequest, admin: AdminUser) -> AdminReactivationRequestResponse:
+    return AdminReactivationRequestResponse(
+        id=row.id,
+        adminId=admin.id,
+        adminName=admin.name,
+        adminEmail=admin.email,
+        message=row.message,
+        status=row.status,
+        requestedAt=row.requested_at,
+        reviewedAt=row.reviewed_at,
+        reviewedBy=row.reviewed_by,
+        resolutionNote=row.resolution_note,
+    )
+
+
 def _json_dict(raw: str) -> dict[str, Any]:
     try:
         value = json.loads(raw or "{}")
@@ -295,18 +375,55 @@ def _audit_out(row: AuditLog) -> dict[str, Any]:
         "targetType": row.target_type,
         "siteLabel": _audit_site_label(row),
     }
-def _maintenance_state(row: MaintenanceConfig | None) -> MaintenanceAdminResponse:
+def _maintenance_state(
+    row: MaintenanceConfig | None,
+    *,
+    scope: str = "global",
+    inherited: bool = False,
+) -> MaintenanceAdminResponse:
     now = utcnow()
     if (row and row.start_at and row.start_at.tzinfo is None) or (row and row.end_at and row.end_at.tzinfo is None):
         now = now.replace(tzinfo=None)
     if not row:
-        return MaintenanceAdminResponse(maintenanceEnabled=False, maintenanceActive=False, maintenanceScheduled=False, maintenanceTitle="Portal em manutenção", maintenanceMessage="Estamos realizando ajustes para melhorar o acesso.")
+        return MaintenanceAdminResponse(
+            maintenanceEnabled=False,
+            maintenanceActive=False,
+            maintenanceScheduled=False,
+            maintenanceExpired=False,
+            maintenanceStatus="disabled",
+            maintenanceScope=scope,
+            maintenanceInherited=inherited,
+            maintenanceTitle="Portal em manutenção",
+            maintenanceMessage="Estamos realizando ajustes para melhorar o acesso.",
+        )
+
     started = row.start_at is None or row.start_at <= now
     not_ended = row.end_at is None or row.end_at > now
+    active = row.enabled and started and not_ended
+    scheduled = row.enabled and row.start_at is not None and row.start_at > now
+    expired = row.enabled and row.end_at is not None and row.end_at <= now
+    if active:
+        state = "active"
+        next_change = row.end_at
+    elif scheduled:
+        state = "scheduled"
+        next_change = row.start_at
+    elif expired:
+        state = "expired"
+        next_change = None
+    else:
+        state = "disabled"
+        next_change = None
+
     return MaintenanceAdminResponse(
         maintenanceEnabled=row.enabled,
-        maintenanceActive=row.enabled and started and not_ended,
-        maintenanceScheduled=row.enabled and row.start_at is not None and row.start_at > now,
+        maintenanceActive=active,
+        maintenanceScheduled=scheduled,
+        maintenanceExpired=expired,
+        maintenanceStatus=state,
+        maintenanceNextChangeAt=next_change,
+        maintenanceScope=scope,
+        maintenanceInherited=inherited,
         maintenanceTitle=row.title,
         maintenanceMessage=row.message,
         maintenanceStartAt=row.start_at,
@@ -336,8 +453,45 @@ def _device_id(row: dict[str, Any]) -> str:
 
 
 def _device_status(row: dict[str, Any]) -> str | None:
-    value = row.get("state") or row.get("status") or row.get("connectionState")
+    value = row.get("state")
+    if value == 1:
+        return "connected"
+    if value == 0:
+        return "disconnected"
+    value = value if value is not None else row.get("status") or row.get("connectionState")
     return str(value) if value is not None else None
+
+
+def _device_radio_summary(row: dict[str, Any]) -> tuple[str | int | None, str | None]:
+    raw = row.get("radio") or row.get("radioTable") or row.get("radio_table") or {}
+    radios = raw if isinstance(raw, list) else [raw] if isinstance(raw, dict) else []
+    channels: list[str] = []
+    bands: list[str] = []
+    for radio in radios:
+        channel = radio.get("channel")
+        if channel is not None:
+            label = str(channel)
+            if label not in channels:
+                channels.append(label)
+        band_raw = str(radio.get("band") or radio.get("radio") or "").strip().lower()
+        band = {
+            "ng": "2.4 GHz",
+            "2g": "2.4 GHz",
+            "2.4": "2.4 GHz",
+            "na": "5 GHz",
+            "5g": "5 GHz",
+            "6g": "6 GHz",
+            "6e": "6 GHz",
+        }.get(band_raw, str(radio.get("band") or "").strip())
+        if band and band not in bands:
+            bands.append(band)
+    channel_value: str | int | None
+    if channels:
+        channel_value = " / ".join(channels)
+    else:
+        channel_value = row.get("channel")
+    band_value = " / ".join(bands) if bands else (str(row.get("band")) if row.get("band") else None)
+    return channel_value, band_value
 
 
 def _client_mac(row: dict[str, Any]) -> str:
@@ -351,10 +505,24 @@ def _client_id(row: dict[str, Any]) -> str:
 def _client_ap_mac(row: dict[str, Any]) -> str:
     uplink = row.get("uplinkDevice") or {}
     wifi = row.get("wifiConnection") or {}
-    return str(uplink.get("macAddress") or uplink.get("mac") or wifi.get("apMacAddress") or row.get("apMac") or "")
+    access_point = row.get("accessPoint") or {}
+    return str(
+        access_point.get("macAddress")
+        or access_point.get("mac")
+        or uplink.get("macAddress")
+        or uplink.get("mac")
+        or wifi.get("apMacAddress")
+        or wifi.get("apMac")
+        or row.get("apMacAddress")
+        or row.get("apMac")
+        or row.get("ap_mac")
+        or ""
+    )
 
 
 def _client_authorized(row: dict[str, Any]) -> bool:
+    if "authorized" in row:
+        return bool(row.get("authorized"))
     access = row.get("access") or {}
     return bool(access.get("authorized"))
 
@@ -375,6 +543,7 @@ def _client_portal_session(db: Session, client_mac: str) -> dict[str, Any]:
         "authorizedAt": session.authorized_at,
         "expiresAt": session.expires_at,
         "remainingSeconds": seconds_remaining(session),
+        "unlimited": bool(session.unlimited_access),
         "canEndAccess": bool(session.site and session.unifi_client_id and session.status == SessionStatus.AUTHORIZED),
     }
 
@@ -455,6 +624,7 @@ def _voucher_out(voucher: Voucher) -> VoucherResponse:
         description=voucher.description,
         status=_voucher_status(voucher),
         durationMinutes=voucher.duration_minutes,
+        unlimitedDuration=voucher.unlimited_duration,
         timeLimitMinutes=voucher.time_limit_minutes,
         dataLimitMb=voucher.data_limit_mb,
         downloadLimit=voucher.download_limit,
@@ -486,7 +656,20 @@ def _set_admin_session(admin: AdminUser, response: Response, db: Session) -> Non
     settings = get_settings()
     raw_session = random_token_urlsafe()
     raw_csrf = random_token_urlsafe()
-    db.add(AdminSession(id=secret_hash(raw_session), admin_id=admin.id, csrf_hash=secret_hash(raw_csrf), expires_at=utcnow() + timedelta(minutes=settings.admin_session_minutes)))
+    now = utcnow()
+    db.add(
+        AdminSession(
+            id=secret_hash(raw_session),
+            admin_id=admin.id,
+            csrf_hash=secret_hash(raw_csrf),
+            expires_at=now + timedelta(minutes=settings.admin_session_minutes),
+            last_seen_at=now,
+        )
+    )
+    admin.failed_login_attempts = 0
+    admin.locked_at = None
+    admin.last_login_at = now
+    admin.last_seen_at = now
     secure = settings.is_production
     response.set_cookie(settings.session_cookie_name, raw_session, httponly=True, secure=secure, samesite="lax", max_age=settings.admin_session_minutes * 60)
     response.set_cookie(settings.csrf_cookie_name, raw_csrf, httponly=False, secure=secure, samesite="lax", max_age=settings.admin_session_minutes * 60)
@@ -494,11 +677,34 @@ def _set_admin_session(admin: AdminUser, response: Response, db: Session) -> Non
 @router.post("/login", response_model=None)
 def login(payload: AdminLoginRequest, response: Response, request: Request, db: Session = Depends(get_db)):
     ip = client_ip(request)
+    admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower()))
+    if admin and not admin.is_active:
+        record_attempt(db, payload.email, ip, "admin-login", False, "account_suspended")
+        raise HTTPException(status.HTTP_423_LOCKED, "Conta temporariamente suspensa. Use Solicitar revisão para pedir a reativação.")
     enforce_rate_limit(db, payload.email, ip, "admin-login", max_attempts=5)
-    admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower(), AdminUser.is_active.is_(True)))
     if not admin or not verify_password(payload.password, admin.password_hash):
+        if admin:
+            admin.failed_login_attempts += 1
+            if admin.failed_login_attempts >= 5:
+                reason = "Cinco tentativas consecutivas de senha sem sucesso."
+                if admin.role == AdminRole.SUPERADMIN:
+                    admin.locked_at = utcnow()
+                    db.add(AuditLog(actor_id="system", event="admin.login_throttled", target_type="admin", target_id=admin.id, metadata_json=json.dumps({"reason": "failed_password_attempts"}, separators=(",", ":"))))
+                    db.commit()
+                    record_attempt(db, payload.email, ip, "admin-login", False, "rate_limited")
+                    text_body, html_body = admin_login_throttle_email(admin.name)
+                    _send_email_quietly(admin.email, "Tentativas de acesso bloqueadas temporariamente", text_body, html_body)
+                    raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Muitas tentativas. Aguarde alguns minutos e tente novamente.")
+                _suspend_admin(db, admin, reason=reason, suspended_by="system", automatic=True)
+                db.add(AuditLog(actor_id="system", event="admin.auto_suspended", target_type="admin", target_id=admin.id, metadata_json=json.dumps({"reason": "failed_password_attempts"}, separators=(",", ":"))))
+                db.commit()
+                record_attempt(db, payload.email, ip, "admin-login", False, "account_suspended")
+                raise HTTPException(status.HTTP_423_LOCKED, "Conta temporariamente suspensa por segurança. Use Solicitar revisão para pedir a reativação.")
+            db.commit()
         record_attempt(db, payload.email, ip, "admin-login", False, "invalid_credentials")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Credenciais inválidas.")
+    admin.failed_login_attempts = 0
+    admin.locked_at = None
     settings = get_settings()
     if settings.require_admin_email_mfa:
         code = _six_digit_code()
@@ -523,9 +729,30 @@ def login(payload: AdminLoginRequest, response: Response, request: Request, db: 
 @router.post("/login/verify-code", response_model=AdminMe)
 def verify_admin_login_code(payload: AdminLoginCodeRequest, response: Response, request: Request, db: Session = Depends(get_db)):
     ip = client_ip(request)
+    admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower()))
+    if admin and not admin.is_active:
+        record_attempt(db, payload.email, ip, "admin-login-code", False, "account_suspended")
+        raise HTTPException(status.HTTP_423_LOCKED, "Conta temporariamente suspensa. Use Solicitar revisão para pedir a reativação.")
     enforce_rate_limit(db, payload.email, ip, "admin-login-code", max_attempts=5)
-    admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower(), AdminUser.is_active.is_(True)))
     if not admin or not verify_password(payload.password, admin.password_hash):
+        if admin:
+            admin.failed_login_attempts += 1
+            if admin.failed_login_attempts >= 5:
+                reason = "Cinco tentativas consecutivas de senha sem sucesso."
+                if admin.role == AdminRole.SUPERADMIN:
+                    admin.locked_at = utcnow()
+                    db.add(AuditLog(actor_id="system", event="admin.login_throttled", target_type="admin", target_id=admin.id, metadata_json=json.dumps({"reason": "failed_password_attempts"}, separators=(",", ":"))))
+                    db.commit()
+                    record_attempt(db, payload.email, ip, "admin-login-code", False, "rate_limited")
+                    text_body, html_body = admin_login_throttle_email(admin.name)
+                    _send_email_quietly(admin.email, "Tentativas de acesso bloqueadas temporariamente", text_body, html_body)
+                    raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Muitas tentativas. Aguarde alguns minutos e tente novamente.")
+                _suspend_admin(db, admin, reason=reason, suspended_by="system", automatic=True)
+                db.add(AuditLog(actor_id="system", event="admin.auto_suspended", target_type="admin", target_id=admin.id, metadata_json=json.dumps({"reason": "failed_password_attempts"}, separators=(",", ":"))))
+                db.commit()
+                record_attempt(db, payload.email, ip, "admin-login-code", False, "account_suspended")
+                raise HTTPException(status.HTTP_423_LOCKED, "Conta temporariamente suspensa por segurança. Use Solicitar revisão para pedir a reativação.")
+            db.commit()
         record_attempt(db, payload.email, ip, "admin-login-code", False, "invalid_credentials")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Código ou credenciais inválidas.")
     row = db.scalar(select(PasswordResetToken).where(PasswordResetToken.admin_id == admin.id, PasswordResetToken.token_hash == _admin_code_hash("admin-login", admin.id, payload.code), PasswordResetToken.consumed_at.is_(None)).order_by(PasswordResetToken.expires_at.desc()).limit(1))
@@ -577,10 +804,70 @@ def reset_admin_password(payload: AdminPasswordResetConfirmRequest, request: Req
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Código inválido ou expirado.")
     row.consumed_at = utcnow()
     admin.password_hash = hash_password(payload.password)
+    admin.failed_login_attempts = 0
+    admin.locked_at = None
     admin.updated_at = utcnow()
+    revoked_at = utcnow()
+    active_sessions = db.scalars(
+        select(AdminSession).where(
+            AdminSession.admin_id == admin.id,
+            AdminSession.revoked_at.is_(None),
+        )
+    ).all()
+    for active_session in active_sessions:
+        active_session.revoked_at = revoked_at
     db.commit()
     record_attempt(db, payload.email, ip, "admin-password-reset", True)
     return {"ok": True}
+
+
+@router.post("/support/reactivation-request")
+def request_admin_reactivation(
+    payload: AdminReactivationRequestCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    ip = client_ip(request)
+    email = payload.email.lower()
+    enforce_rate_limit(
+        db,
+        email,
+        ip,
+        "admin-reactivation-request",
+        max_attempts=3,
+        include_successes=True,
+    )
+    admin = db.scalar(select(AdminUser).where(AdminUser.email == email))
+    if admin and not admin.is_active:
+        pending = db.scalar(
+            select(AdminReactivationRequest)
+            .where(
+                AdminReactivationRequest.admin_id == admin.id,
+                AdminReactivationRequest.status == "PENDING",
+            )
+            .order_by(AdminReactivationRequest.requested_at.desc())
+            .limit(1)
+        )
+        if not pending:
+            pending = AdminReactivationRequest(admin_id=admin.id, message=payload.message.strip())
+            db.add(pending)
+            db.flush()
+            db.add(
+                AuditLog(
+                    actor_id=admin.id,
+                    event="admin.reactivation_requested",
+                    target_type="admin",
+                    target_id=admin.id,
+                    metadata_json="{}",
+                )
+            )
+            db.commit()
+            text_body, html_body = admin_reactivation_request_email(admin.name)
+            _send_email_quietly(admin.email, "Solicitação de revisão recebida", text_body, html_body)
+            alert_text, alert_html = admin_reactivation_alert_email(admin.name, admin.email, pending.message)
+            _notify_active_reviewers(db, "Nova solicitação de revisão de acesso", alert_text, alert_html)
+    record_attempt(db, email, ip, "admin-reactivation-request", True)
+    return {"ok": True, "message": "Se a conta estiver suspensa, a solicitação será encaminhada para análise."}
 
 
 @router.post("/logout", dependencies=[Depends(require_csrf)])
@@ -602,7 +889,7 @@ def me(admin: AdminUser = Depends(current_admin), db: Session = Depends(get_db))
 
 
 @router.get("/system-health")
-async def system_health(_admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+async def system_health(_admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
     settings = get_settings()
     database_status = "ok"
     schema_status = "ok"
@@ -767,7 +1054,15 @@ async def sites(siteId: str | None = None, db: Session = Depends(get_db), admin:
 
 
 @router.post("/vouchers", response_model=VoucherBatchCreateResponse, dependencies=[Depends(require_csrf)])
-def create_vouchers(payload: VoucherCreateRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+def create_vouchers(
+    payload: VoucherCreateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(require_role(AdminRole.ADMIN)),
+):
+    if payload.deliveryEmail and payload.quantity != 1:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "O envio por e-mail está disponível para criação de um voucher por vez.")
+
     selected_site, site_name = _voucher_site_payload(db, admin, payload.siteId, payload.site)
     max_devices = payload.maxDevices or payload.deviceLimit
     created = []
@@ -782,6 +1077,7 @@ def create_vouchers(payload: VoucherCreateRequest, db: Session = Depends(get_db)
             code_label=_voucher_label(code),
             description=payload.description,
             duration_minutes=payload.durationMinutes,
+            unlimited_duration=payload.unlimitedDuration,
             time_limit_minutes=payload.timeLimitMinutes,
             data_limit_mb=payload.dataLimitMb,
             download_limit=payload.downloadLimit,
@@ -797,10 +1093,86 @@ def create_vouchers(payload: VoucherCreateRequest, db: Session = Depends(get_db)
         )
         db.add(voucher)
         db.flush()
-        created.append(CreatedVoucherCode(id=voucher.id, code=code, codeLabel=voucher.code_label, site=voucher.site_name_snapshot or voucher.site, durationMinutes=voucher.duration_minutes, expiresAt=voucher.expires_at))
-    audit(db, admin, "voucher.created", "voucher", "batch", {"siteId": selected_site, "siteName": site_name, "quantity": payload.quantity, "advancedLimitsStoredOnly": True})
+        created.append(
+            CreatedVoucherCode(
+                id=voucher.id,
+                code=code,
+                codeLabel=voucher.code_label,
+                site=voucher.site_name_snapshot or voucher.site,
+                durationMinutes=voucher.duration_minutes,
+                unlimitedDuration=voucher.unlimited_duration,
+                expiresAt=voucher.expires_at,
+            )
+        )
+    audit(
+        db,
+        admin,
+        "voucher.created",
+        "voucher",
+        "batch",
+        {
+            "siteId": selected_site,
+            "siteName": site_name,
+            "quantity": payload.quantity,
+            "unlimitedDuration": payload.unlimitedDuration,
+            "emailRequested": bool(payload.deliveryEmail),
+        },
+    )
     db.commit()
-    return VoucherBatchCreateResponse(created=len(created), vouchers=created)
+
+    delivery_status = "not_requested"
+    sent_to = payload.deliveryEmail
+    if payload.deliveryEmail and created:
+        ip = client_ip(request)
+        enforce_rate_limit(
+            db,
+            f"voucher-email:{admin.id}:{payload.deliveryEmail.lower()}",
+            ip,
+            "admin-voucher-email",
+            max_attempts=20,
+            include_successes=True,
+        )
+        created_voucher = created[0]
+        duration_label = "Sem limite (até encerramento manual)" if created_voucher.unlimitedDuration else f"{created_voucher.durationMinutes} minutos"
+        expires_label = created_voucher.expiresAt.strftime("%d/%m/%Y %H:%M UTC") if created_voucher.expiresAt else "Sem data limite"
+        text_body, html_body = voucher_email(
+            created_voucher.code,
+            site=created_voucher.site,
+            duration_label=duration_label,
+            max_devices=max_devices,
+            expires_label=expires_label,
+            description=payload.description,
+        )
+        try:
+            send_email(payload.deliveryEmail, "Seu voucher de acesso Wi-Fi", text_body, html_body)
+            delivery_status = "sent"
+            record_attempt(db, f"voucher-email:{admin.id}:{payload.deliveryEmail.lower()}", ip, "admin-voucher-email", True)
+        except EmailDeliveryError as exc:
+            delivery_status = "failed"
+            record_attempt(
+                db,
+                f"voucher-email:{admin.id}:{payload.deliveryEmail.lower()}",
+                ip,
+                "admin-voucher-email",
+                False,
+                getattr(exc, "reason", "smtp_error"),
+            )
+        audit(
+            db,
+            admin,
+            "voucher.email_delivery",
+            "voucher",
+            created_voucher.id,
+            {"status": delivery_status},
+        )
+        db.commit()
+
+    return VoucherBatchCreateResponse(
+        created=len(created),
+        vouchers=created,
+        emailDeliveryStatus=delivery_status,
+        emailSentTo=sent_to,
+    )
 
 
 @router.get("/vouchers", response_model=list[VoucherResponse])
@@ -828,10 +1200,15 @@ def update_voucher(voucher_id: str, payload: VoucherUpdateRequest, db: Session =
     selected_site, site_name = _voucher_site_payload(db, admin, payload.siteId, payload.site)
     voucher.description = payload.description
     voucher.duration_minutes = payload.durationMinutes
-    voucher.time_limit_minutes = payload.timeLimitMinutes
-    voucher.data_limit_mb = payload.dataLimitMb
-    voucher.download_limit = payload.downloadLimit
-    voucher.upload_limit = payload.uploadLimit
+    voucher.unlimited_duration = payload.unlimitedDuration
+    if "timeLimitMinutes" in payload.model_fields_set:
+        voucher.time_limit_minutes = payload.timeLimitMinutes
+    if "dataLimitMb" in payload.model_fields_set:
+        voucher.data_limit_mb = payload.dataLimitMb
+    if "downloadLimit" in payload.model_fields_set:
+        voucher.download_limit = payload.downloadLimit
+    if "uploadLimit" in payload.model_fields_set:
+        voucher.upload_limit = payload.uploadLimit
     voucher.device_limit = payload.deviceLimit
     voucher.max_devices = payload.maxDevices or payload.deviceLimit
     voucher.site = site_name
@@ -987,7 +1364,15 @@ def delete_site_portal_appearance(site_id: str, db: Session = Depends(get_db), a
 @router.get("/maintenance", response_model=MaintenanceAdminResponse)
 def get_maintenance(siteId: str | None = None, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
     selected_site = ensure_site_access(db, admin, siteId, allow_all=True)
-    return _maintenance_state(db.get(MaintenanceConfig, selected_site or "global"))
+    if selected_site:
+        site_row = db.get(MaintenanceConfig, selected_site)
+        if site_row:
+            return _maintenance_state(site_row, scope=selected_site)
+        global_row = db.get(MaintenanceConfig, "global")
+        if global_row:
+            return _maintenance_state(global_row, scope="global", inherited=True)
+        return _maintenance_state(None, scope=selected_site)
+    return _maintenance_state(db.get(MaintenanceConfig, "global"), scope="global")
 
 
 @router.put("/maintenance", response_model=MaintenanceAdminResponse, dependencies=[Depends(require_csrf)])
@@ -1011,12 +1396,12 @@ def update_maintenance(payload: MaintenanceUpdateRequest, siteId: str | None = N
     audit(db, admin, "maintenance.updated", "maintenance", maintenance_id, {"siteId": selected_site, "before": before, "after": payload.model_dump(mode="json")})
     db.commit()
     db.refresh(row)
-    return _maintenance_state(row)
+    return _maintenance_state(row, scope=maintenance_id)
 
 
 
 @router.get("/audit")
-def audit_log(siteId: str | None = None, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+def audit_log(siteId: str | None = None, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
     selected_sites = visible_site_filter(db, admin, siteId)
     rows = db.scalars(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(200)).all()
     visible = []
@@ -1031,13 +1416,13 @@ def audit_log(siteId: str | None = None, db: Session = Depends(get_db), admin: A
 
 
 @router.get("/auth-attempts", response_model=list[AuthAttemptResponse])
-def auth_attempts(limit: int = Query(default=120, ge=1, le=300), db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+def auth_attempts(limit: int = Query(default=120, ge=1, le=300), db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
     rows = db.scalars(select(AuthAttempt).order_by(AuthAttempt.created_at.desc()).limit(limit)).all()
     return [AuthAttemptResponse(id=row.id, method=row.method, success=row.success, reason=row.reason, createdAt=row.created_at) for row in rows]
 
 
 @router.get("/maintenance/audit")
-def maintenance_audit(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+def maintenance_audit(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
     rows = db.scalars(select(AuditLog).where(AuditLog.target_type == "maintenance").order_by(AuditLog.created_at.desc()).limit(50)).all()
     return [_audit_out(row) for row in rows]
 
@@ -1128,11 +1513,11 @@ def list_sessions(siteId: str | None = None, q: str | None = None, status_filter
         current_status = session.status.value.lower()
         remaining = seconds_remaining(session)
         if status_filter and status_filter != "all":
-            if status_filter == "online" and not (session.status == SessionStatus.AUTHORIZED and remaining > 0):
+            if status_filter == "online" and not (session.status == SessionStatus.AUTHORIZED and (session.unlimited_access or remaining > 0)):
                 continue
-            if status_filter == "expiring-30" and not (session.status == SessionStatus.AUTHORIZED and 0 < remaining <= 1800):
+            if status_filter == "expiring-30" and not (session.status == SessionStatus.AUTHORIZED and not session.unlimited_access and 0 < remaining <= 1800):
                 continue
-            if status_filter == "expiring-10" and not (session.status == SessionStatus.AUTHORIZED and 0 < remaining <= 600):
+            if status_filter == "expiring-10" and not (session.status == SessionStatus.AUTHORIZED and not session.unlimited_access and 0 < remaining <= 600):
                 continue
             if status_filter == "ended" and current_status != "disconnected":
                 continue
@@ -1161,10 +1546,11 @@ def list_sessions(siteId: str | None = None, q: str | None = None, status_filter
                 "reauthRequiredAt": session.reauth_required_at,
                 "reauthReason": session.reauth_reason,
                 "remainingSeconds": remaining,
+                "unlimited": bool(session.unlimited_access),
                 "durationSeconds": session.duration_seconds,
                 "canEndAccess": bool(session.site and session.status == SessionStatus.AUTHORIZED),
                 "canRequireReauth": bool(session.site and session.status == SessionStatus.AUTHORIZED),
-                "canExtend": bool(session.site and session.status == SessionStatus.AUTHORIZED and remaining > 0),
+                "canExtend": bool(session.site and session.status == SessionStatus.AUTHORIZED and not session.unlimited_access and remaining > 0),
                 "canReauthorize": bool(session.site and session.status != SessionStatus.AUTHORIZED),
                 "canBlock": bool(session.site and session.client_mac),
             }
@@ -1240,6 +1626,8 @@ def revoke_admin_invitation(invite_id: str, db: Session = Depends(get_db), admin
         audit(db, admin, "admin_invitation.revoked", "admin_invitation", invite.id, {"email": invite.email, "role": invite.role})
         db.commit()
         db.refresh(invite)
+        text_body, html_body = admin_invitation_revoked_email(invite.name)
+        _send_email_quietly(invite.email, "Convite administrativo cancelado", text_body, html_body)
     return _invite_out(invite, _invite_delivery_status(invite))
 
 
@@ -1297,6 +1685,11 @@ def accept_admin_invitation(payload: AdminInviteAcceptRequest, db: Session = Dep
         admin.role = AdminRole(invite.role)
         admin.password_hash = hash_password(payload.password)
         admin.is_active = True
+        admin.failed_login_attempts = 0
+        admin.locked_at = None
+        admin.suspended_at = None
+        admin.suspended_reason = ""
+        admin.suspended_by = ""
         admin.updated_at = now
     invite.accepted_at = now
     site_ids = invitation_sites(invite.permitted_site_ids_json)
@@ -1319,19 +1712,185 @@ def update_admin_site_access(admin_id: str, payload: AdminSiteAccessUpdateReques
     audit(db, admin, "admin.site_access_granted", "admin", target.id, {"siteIds": payload.siteIds})
     db.commit()
     return {"ok": True, "siteIds": payload.siteIds}
+
+
+@router.put("/admins/{admin_id}/role", dependencies=[Depends(require_csrf)])
+def update_admin_role(
+    admin_id: str,
+    payload: AdminRoleUpdateRequest,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN)),
+):
+    target = db.get(AdminUser, admin_id)
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Administrador não encontrado.")
+    if target.id == admin.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Não é possível alterar o próprio perfil.")
+    if target.role == AdminRole.SUPERADMIN:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "O perfil global não pode ser alterado por esta ação.")
+    if payload.role == AdminRole.SUPERADMIN:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Use o fluxo de convite para conceder acesso global.")
+    old_role = target.role
+    if old_role == payload.role:
+        return {"ok": True, "role": target.role.value}
+    target.role = payload.role
+    target.updated_at = utcnow()
+    audit(
+        db,
+        admin,
+        "admin.role_changed",
+        "admin",
+        target.id,
+        {"from": old_role.value, "to": payload.role.value},
+    )
+    db.commit()
+    text_body, html_body = admin_access_change_email(target.name, old_role.value, payload.role.value)
+    _send_email_quietly(target.email, "Seu perfil de acesso foi atualizado", text_body, html_body)
+    return {"ok": True, "role": target.role.value}
+
+
+@router.put("/admins/{admin_id}/status", dependencies=[Depends(require_csrf)])
+def update_admin_status(
+    admin_id: str,
+    payload: AdminStatusUpdateRequest,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN)),
+):
+    target = db.get(AdminUser, admin_id)
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Administrador não encontrado.")
+    if target.id == admin.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Não é possível suspender ou reativar a própria conta.")
+    if target.role == AdminRole.SUPERADMIN:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "O acesso global não pode ser suspenso por esta ação.")
+
+    if payload.active:
+        target.is_active = True
+        target.failed_login_attempts = 0
+        target.locked_at = None
+        target.suspended_at = None
+        target.suspended_reason = ""
+        target.suspended_by = ""
+        pending = db.scalars(
+            select(AdminReactivationRequest).where(
+                AdminReactivationRequest.admin_id == target.id,
+                AdminReactivationRequest.status == "PENDING",
+            )
+        ).all()
+        now = utcnow()
+        for request_row in pending:
+            request_row.status = "APPROVED"
+            request_row.reviewed_at = now
+            request_row.reviewed_by = admin.id
+            request_row.resolution_note = payload.reason.strip()
+        audit(db, admin, "admin.reactivated", "admin", target.id, {"reason": payload.reason.strip()})
+        db.commit()
+        text_body, html_body = admin_reactivation_result_email(target.name, True, payload.reason)
+        _send_email_quietly(target.email, "Acesso administrativo reativado", text_body, html_body)
+        return {"ok": True, "status": "active"}
+
+    reason = payload.reason.strip() or "Acesso suspenso para revisão administrativa."
+    _suspend_admin(db, target, reason=reason, suspended_by=admin.id, automatic=False)
+    audit(db, admin, "admin.suspended", "admin", target.id, {"reason": reason})
+    db.commit()
+    return {"ok": True, "status": "suspended"}
+
+
+@router.get("/admins/reactivation-requests", response_model=list[AdminReactivationRequestResponse])
+def list_admin_reactivation_requests(
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN)),
+):
+    rows = db.scalars(
+        select(AdminReactivationRequest)
+        .order_by(AdminReactivationRequest.requested_at.desc())
+        .limit(100)
+    ).all()
+    result: list[AdminReactivationRequestResponse] = []
+    for row in rows:
+        target = db.get(AdminUser, row.admin_id)
+        if target:
+            result.append(_reactivation_out(row, target))
+    return result
+
+
+@router.post("/admins/reactivation-requests/{request_id}/review", dependencies=[Depends(require_csrf)])
+def review_admin_reactivation_request(
+    request_id: str,
+    payload: AdminReactivationReviewRequest,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN)),
+):
+    row = db.get(AdminReactivationRequest, request_id)
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Solicitação não encontrada.")
+    if row.status != "PENDING":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Esta solicitação já foi analisada.")
+    target = db.get(AdminUser, row.admin_id)
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta administrativa não encontrada.")
+    if target.role == AdminRole.SUPERADMIN:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Esta conta não pode ser alterada por este fluxo.")
+
+    now = utcnow()
+    row.reviewed_at = now
+    row.reviewed_by = admin.id
+    row.resolution_note = payload.note.strip()
+    if payload.approved:
+        row.status = "APPROVED"
+        target.is_active = True
+        target.failed_login_attempts = 0
+        target.locked_at = None
+        target.suspended_at = None
+        target.suspended_reason = ""
+        target.suspended_by = ""
+        audit(db, admin, "admin.reactivation_approved", "admin", target.id, {"requestId": row.id})
+    else:
+        row.status = "REJECTED"
+        audit(db, admin, "admin.reactivation_rejected", "admin", target.id, {"requestId": row.id})
+    db.commit()
+    text_body, html_body = admin_reactivation_result_email(target.name, payload.approved, payload.note)
+    _send_email_quietly(
+        target.email,
+        "Resultado da revisão de acesso",
+        text_body,
+        html_body,
+    )
+    return {"ok": True, "status": row.status}
+
+
 @router.get("/admins")
 def list_admins(_admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN)), db: Session = Depends(get_db)):
     rows = db.scalars(select(AdminUser).order_by(AdminUser.created_at.desc())).all()
+    now = utcnow()
+    cutoff = now - timedelta(minutes=5)
+    active_session_rows = db.execute(
+        select(AdminSession.admin_id, func.max(AdminSession.last_seen_at))
+        .where(
+            AdminSession.revoked_at.is_(None),
+            AdminSession.expires_at > now,
+            AdminSession.last_seen_at >= cutoff,
+        )
+        .group_by(AdminSession.admin_id)
+    ).all()
+    online_map = {admin_id: last_seen for admin_id, last_seen in active_session_rows}
     return [
         {
             "id": row.id,
             "name": row.name,
             "email": row.email,
             "role": row.role.value,
-            "status": "active" if row.is_active else "inactive",
-            "mfa": "not_configured",
+            "status": "active" if row.is_active else "suspended",
+            "mfa": "enabled" if get_settings().require_admin_email_mfa else "optional",
+            "siteIds": allowed_site_ids(db, row) or [],
+            "canSelectAllSites": row.role == AdminRole.SUPERADMIN,
             "createdAt": row.created_at,
-            "lastLogin": None,
+            "lastLogin": row.last_login_at,
+            "lastSeenAt": online_map.get(row.id) or row.last_seen_at,
+            "online": row.id in online_map,
+            "failedLoginAttempts": row.failed_login_attempts,
+            "suspendedAt": row.suspended_at,
+            "suspendedReason": row.suspended_reason,
         }
         for row in rows
     ]
@@ -1356,7 +1915,8 @@ async def list_users(siteId: str | None = None, db: Session = Depends(get_db), a
                     "siteName": _unifi_site_name(site),
                     "apMac": _client_ap_mac(client),
                     "authorized": _client_authorized(client),
-                    "ssid": (client.get("wifiConnection") or {}).get("ssid") or client.get("ssid"),
+                    "ssid": (client.get("wifiConnection") or {}).get("ssid") or client.get("ssid") or client.get("essid"),
+                    "signal": client.get("signal"),
                     **_client_portal_session(db, _client_mac(client)),
                 }
             )
@@ -1379,7 +1939,7 @@ async def list_access_points(siteId: str | None = None, db: Session = Depends(ge
                 client_count_by_ap[ap_mac] = client_count_by_ap.get(ap_mac, 0) + 1
         for ap in await unifi_client.list_access_points(site_id):
             mac = _device_mac(ap)
-            radio = ap.get("radio") or ap.get("radioTable") or {}
+            channel, band = _device_radio_summary(ap)
             rows.append(
                 {
                     "id": _device_id(ap),
@@ -1392,8 +1952,8 @@ async def list_access_points(siteId: str | None = None, db: Session = Depends(ge
                     "status": _device_status(ap),
                     "uptime": ap.get("uptime") or ap.get("upTime"),
                     "clientes": client_count_by_ap.get(mac.lower(), None),
-                    "canal": ap.get("channel") or radio.get("channel"),
-                    "banda": ap.get("band") or radio.get("band"),
+                    "canal": channel,
+                    "banda": band,
                 }
             )
     return rows
