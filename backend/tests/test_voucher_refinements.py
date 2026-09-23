@@ -197,3 +197,52 @@ def test_viewer_cannot_open_security_admin_endpoints(client):
     assert client.get("/api/admin/system-health").status_code == 403
     assert client.get("/api/admin/audit?siteId=Esdras").status_code == 403
     assert client.get("/api/admin/auth-attempts").status_code == 403
+
+
+def test_refined_voucher_editor_preserves_advanced_limits_when_omitted(client, admin_user):
+    db = SessionLocal()
+    voucher = Voucher(
+        code_hash=secret_hash("RFADVANCED"),
+        code_label="RF-ADVANCED",
+        description="Antes",
+        duration_minutes=60,
+        time_limit_minutes=45,
+        data_limit_mb=500,
+        download_limit=12000,
+        upload_limit=4000,
+        device_limit=1,
+        max_devices=1,
+        site="ALL",
+        site_id="ALL",
+        site_name_snapshot="Todos os sites",
+    )
+    db.add(voucher)
+    db.commit()
+    voucher_id = voucher.id
+    db.close()
+
+    csrf = login(client)
+    response = client.put(
+        f"/api/admin/vouchers/{voucher_id}",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "description": "Depois",
+            "durationMinutes": 120,
+            "unlimitedDuration": False,
+            "deviceLimit": 1,
+            "maxDevices": 1,
+            "site": "ALL",
+            "siteId": "ALL",
+            "enabled": True,
+        },
+    )
+
+    assert response.status_code == 200
+    db = SessionLocal()
+    updated = db.get(Voucher, voucher_id)
+    assert updated is not None
+    assert updated.time_limit_minutes == 45
+    assert updated.data_limit_mb == 500
+    assert updated.download_limit == 12000
+    assert updated.upload_limit == 4000
+    db.close()
