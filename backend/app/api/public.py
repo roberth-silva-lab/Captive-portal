@@ -46,7 +46,7 @@ from app.security.tokens import random_token_urlsafe, secret_hash
 from app.services.media_storage import LocalMediaStorage
 from app.services.rate_limit import enforce_rate_limit, record_attempt
 from app.services.session_operations import active_block_for_client
-from app.services.sessions import authorize_session, duration_between, seconds_remaining
+from app.services.sessions import authorize_session, comparable_now, duration_between, seconds_remaining
 
 router = APIRouter(prefix="/api", tags=["public"])
 logger = logging.getLogger(__name__)
@@ -431,7 +431,7 @@ def session_status(
     )
     if not session:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Sessão não encontrada.")
-    if session.status == SessionStatus.AUTHORIZED and session.expires_at and session.expires_at <= utcnow() and not (session.site and session.unifi_client_id):
+    if session.status == SessionStatus.AUTHORIZED and session.expires_at and session.expires_at <= comparable_now(session.expires_at) and not (session.site and session.unifi_client_id):
         session.status = SessionStatus.EXPIRED
         session.duration_seconds = duration_between(session.authorized_at or session.created_at, session.expires_at)
         db.commit()
@@ -470,7 +470,7 @@ async def end_session(payload: SessionControlRequest, db: Session = Depends(get_
     session.status = SessionStatus.DISCONNECTED
     session.disconnected_at = utcnow()
     if session.authorized_at:
-        session.duration_seconds = int((session.disconnected_at - session.authorized_at).total_seconds())
+        session.duration_seconds = duration_between(session.authorized_at, session.disconnected_at)
     db.commit()
     try:
         if session.site and session.unifi_client_id:
