@@ -89,6 +89,65 @@ def wifi_code_email(code: str, ttl_minutes: int) -> tuple[str, str]:
     """
     return text, html_body
 
+def voucher_email(
+    code: str,
+    *,
+    site: str,
+    duration_label: str,
+    max_devices: int,
+    expires_label: str,
+    description: str = "",
+) -> tuple[str, str]:
+    safe_code = html.escape(code)
+    safe_site = html.escape(site)
+    safe_duration = html.escape(duration_label)
+    safe_expires = html.escape(expires_label)
+    safe_description = html.escape(description.strip()) if description.strip() else ""
+    description_text = f"Finalidade: {description.strip()}\n" if description.strip() else ""
+    description_html = f'<p style="font-size:14px;line-height:1.55;color:#5f706a;"><strong>Finalidade:</strong> {safe_description}</p>' if safe_description else ""
+    text = (
+        "Receita Federal - Voucher de acesso Wi-Fi\n\n"
+        f"Seu voucher: {code}\n\n"
+        f"Unidade: {site}\n"
+        f"Duração do acesso: {duration_label}\n"
+        f"Dispositivos permitidos: {max_devices}\n"
+        f"Validade do voucher: {expires_label}\n"
+        f"{description_text}\n"
+        "Conecte-se à rede de visitantes e informe este código no portal de acesso.\n"
+        "Não compartilhe o voucher com outras pessoas se ele for destinado a uso individual."
+    )
+    html_body = f"""
+    <!doctype html>
+    <html lang="pt-BR">
+      <body style="margin:0;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#1f2d33;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f6f5;padding:24px 12px;">
+          <tr><td align="center">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:580px;background:#ffffff;border:1px solid #dce7e3;border-radius:10px;overflow:hidden;">
+              <tr><td style="background:#125f78;color:#ffffff;padding:22px 24px;">
+                <div style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.82;">Receita Federal</div>
+                <div style="font-size:22px;font-weight:700;margin-top:4px;">Voucher de acesso Wi-Fi</div>
+              </td></tr>
+              <tr><td style="padding:26px 24px;">
+                <p style="font-size:15px;line-height:1.55;margin:0 0 14px;">Use o código abaixo no portal da rede de visitantes.</p>
+                <div style="font-size:30px;letter-spacing:.08em;font-weight:800;color:#123f52;background:#eef6f4;border:1px solid #d8e7e1;border-radius:8px;padding:18px;text-align:center;">{safe_code}</div>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:20px;font-size:14px;line-height:1.55;">
+                  <tr><td style="padding:6px 0;color:#5f706a;">Unidade</td><td style="padding:6px 0;text-align:right;font-weight:700;">{safe_site}</td></tr>
+                  <tr><td style="padding:6px 0;color:#5f706a;">Duração</td><td style="padding:6px 0;text-align:right;font-weight:700;">{safe_duration}</td></tr>
+                  <tr><td style="padding:6px 0;color:#5f706a;">Dispositivos</td><td style="padding:6px 0;text-align:right;font-weight:700;">{max_devices}</td></tr>
+                  <tr><td style="padding:6px 0;color:#5f706a;">Validade do voucher</td><td style="padding:6px 0;text-align:right;font-weight:700;">{safe_expires}</td></tr>
+                </table>
+                {description_html}
+                <p style="font-size:14px;line-height:1.55;color:#5f706a;margin:18px 0 0;">Conecte-se à rede de visitantes e informe o voucher no portal. Se o código for individual, não o compartilhe.</p>
+              </td></tr>
+            </table>
+          </td></tr>
+        </table>
+      </body>
+    </html>
+    """
+    return text, html_body
+
+
 def admin_invitation_email(name: str, invite_url: str, expires_hours: int) -> tuple[str, str]:
     safe_name = html.escape(name)
     safe_url = html.escape(invite_url)
