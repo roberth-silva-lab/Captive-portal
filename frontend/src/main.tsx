@@ -849,12 +849,13 @@ class AdminSectionErrorBoundary extends Component<AdminSectionErrorBoundaryProps
   }
 }
 
-function AdminLogin({ email, password, error, onEmail, onPassword, onLogin, onRequestPasswordReset, onResetPassword }: { email: string; password: string; error: string; onEmail: (value: string) => void; onPassword: (value: string) => void; onLogin: (code?: string) => Promise<AdminMe | AdminLoginChallenge>; onRequestPasswordReset: (email: string) => Promise<void>; onResetPassword: (email: string, code: string, password: string, confirmPassword: string) => Promise<void> }) {
-  const [mode, setMode] = useState<'login' | 'code' | 'forgot' | 'reset'>('login')
+function AdminLogin({ email, password, error, onEmail, onPassword, onLogin, onRequestPasswordReset, onResetPassword, onRequestAccessReview }: { email: string; password: string; error: string; onEmail: (value: string) => void; onPassword: (value: string) => void; onLogin: (code?: string) => Promise<AdminMe | AdminLoginChallenge>; onRequestPasswordReset: (email: string) => Promise<void>; onResetPassword: (email: string, code: string, password: string, confirmPassword: string) => Promise<void>; onRequestAccessReview: (email: string, message: string) => Promise<void> }) {
+  const [mode, setMode] = useState<'login' | 'code' | 'forgot' | 'reset' | 'support'>('login')
   const [code, setCode] = useState('')
   const [resetCode, setResetCode] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [supportMessage, setSupportMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [localError, setLocalError] = useState('')
   const [info, setInfo] = useState('')
@@ -925,6 +926,21 @@ function AdminLogin({ email, password, error, onEmail, onPassword, onLogin, onRe
     }
   }
 
+  const submitSupport = async () => {
+    setBusy(true)
+    setLocalError('')
+    setInfo('')
+    try {
+      await onRequestAccessReview(email, supportMessage)
+      setSupportMessage('')
+      setInfo('Solicitação enviada para análise. Você receberá um e-mail quando houver uma decisão.')
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Não foi possível enviar a solicitação agora.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const updateCode = (value: string) => {
     const cleaned = onlyDigits(value).slice(0, 6)
     setCode(cleaned)
@@ -938,24 +954,26 @@ function AdminLogin({ email, password, error, onEmail, onPassword, onLogin, onRe
       <section className="panel admin-card admin-auth-card" aria-labelledby="admin-login-title">
         <div className="admin-auth-icon"><ShieldCheck aria-hidden="true" /></div>
         <div className="admin-auth-heading">
-          <h1 id="admin-login-title">{mode === 'forgot' ? 'Recuperar acesso' : mode === 'reset' ? 'Redefinir senha' : mode === 'code' ? 'Verificação por e-mail' : 'Painel administrativo'}</h1>
-          <p>{mode === 'code' ? 'Digite o código enviado para concluir o login seguro.' : mode === 'forgot' ? 'Informe o e-mail administrativo para receber um código.' : mode === 'reset' ? 'Use o código recebido e defina uma nova senha forte.' : 'Entre para acompanhar acessos, avisos, vouchers e manutenção do portal.'}</p>
+          <h1 id="admin-login-title">{mode === 'forgot' ? 'Recuperar acesso' : mode === 'reset' ? 'Redefinir senha' : mode === 'code' ? 'Verificação por e-mail' : mode === 'support' ? 'Solicitar revisão de acesso' : 'Painel administrativo'}</h1>
+          <p>{mode === 'code' ? 'Digite o código enviado para concluir o login seguro.' : mode === 'forgot' ? 'Informe o e-mail administrativo para receber um código.' : mode === 'reset' ? 'Use o código recebido e defina uma nova senha forte.' : mode === 'support' ? 'Use esta opção quando sua conta estiver temporariamente suspensa.' : 'Entre para acompanhar acessos, avisos, vouchers e manutenção do portal.'}</p>
         </div>
         <div className="admin-auth-form">
           {mode !== 'code' && mode !== 'reset' ? <label htmlFor="admin-email">E-mail<input id="admin-email" value={email} onChange={(event) => onEmail(event.target.value)} autoComplete="email" /></label> : null}
           {mode === 'login' ? <label htmlFor="admin-password">Senha<input id="admin-password" value={password} onChange={(event) => onPassword(event.target.value)} type="password" autoComplete="current-password" /></label> : null}
           {mode === 'code' ? <label className="admin-code-field" htmlFor="admin-code"><span>Código de verificação</span><input id="admin-code" value={code} onChange={(event) => updateCode(event.target.value)} inputMode="numeric" autoComplete="one-time-code" maxLength={6} autoFocus />{codeSlots(code)}</label> : null}
           {mode === 'reset' ? <><label className="admin-code-field" htmlFor="admin-reset-code"><span>Código recebido</span><input id="admin-reset-code" value={resetCode} onChange={(event) => setResetCode(onlyDigits(event.target.value).slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" maxLength={6} />{codeSlots(resetCode)}</label><label htmlFor="admin-new-password">Nova senha<input id="admin-new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} type="password" autoComplete="new-password" minLength={12} /></label><label htmlFor="admin-confirm-password">Confirmar senha<input id="admin-confirm-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} type="password" autoComplete="new-password" minLength={12} /></label></> : null}
+          {mode === 'support' ? <label htmlFor="admin-support-message">Mensagem para análise<textarea id="admin-support-message" value={supportMessage} onChange={(event) => setSupportMessage(event.target.value)} rows={4} maxLength={500} placeholder="Explique brevemente por que precisa recuperar o acesso." /></label> : null}
           {mode === 'login' ? <button className="primary admin-auth-submit" onClick={() => void submitLogin()} type="button" disabled={busy}><ShieldCheck /> {busy ? 'Validando...' : 'Continuar'}</button> : null}
           {mode === 'code' ? <button className="primary admin-auth-submit" onClick={() => void verifyCode()} type="button" disabled={busy || code.length !== 6}><ShieldCheck /> {busy ? 'Verificando...' : 'Entrar no painel'}</button> : null}
           {mode === 'forgot' ? <button className="primary admin-auth-submit" onClick={() => void submitForgot()} type="button" disabled={busy || !email}><ShieldCheck /> {busy ? 'Enviando...' : 'Enviar código'}</button> : null}
           {mode === 'reset' ? <button className="primary admin-auth-submit" onClick={() => void submitReset()} type="button" disabled={busy || resetCode.length !== 6 || newPassword.length < 12 || newPassword !== confirmPassword}><ShieldCheck /> {busy ? 'Salvando...' : 'Alterar senha'}</button> : null}
+          {mode === 'support' ? <button className="primary admin-auth-submit" onClick={() => void submitSupport()} type="button" disabled={busy || !email}><ShieldCheck /> {busy ? 'Enviando...' : 'Enviar solicitação'}</button> : null}
         </div>
         {shownError ? <p className="error admin-auth-error" role="alert">{shownError}</p> : null}
         {info ? <p className="success admin-auth-success" role="status">{info}</p> : null}
         <div className="admin-auth-links">
-          {mode === 'login' ? <button type="button" onClick={() => { setMode('forgot'); setLocalError(''); setInfo('') }}>Esqueci minha senha</button> : null}
-          {mode !== 'login' ? <button type="button" onClick={() => { setMode('login'); setLocalError(''); setInfo(''); setCode(''); setResetCode('') }}>Voltar ao login</button> : null}
+          {mode === 'login' ? <><button type="button" onClick={() => { setMode('forgot'); setLocalError(''); setInfo('') }}>Esqueci minha senha</button><button type="button" onClick={() => { setMode('support'); setLocalError(''); setInfo('') }}>Conta suspensa? Solicitar revisão</button></> : null}
+          {mode !== 'login' ? <button type="button" onClick={() => { setMode('login'); setLocalError(''); setInfo(''); setCode(''); setResetCode(''); setSupportMessage('') }}>Voltar ao login</button> : null}
         </div>
         <p className="admin-auth-note">Acesso restrito. Sua sessão é protegida durante o uso do painel.</p>
       </section>
