@@ -121,3 +121,128 @@ def test_admin_users_maps_legacy_unifi_fields(client, admin_user, monkeypatch):
     assert row["ssid"] == "Visitantes-Esdras"
     assert row["authorized"] is True
     assert row["signal"] == -51
+
+
+@pytest.mark.asyncio
+async def test_public_session_status_requires_matching_session_id(client, monkeypatch):
+    from app.core.database import SessionLocal
+    from app.models import Voucher
+    from app.security.tokens import secret_hash
+    from app.api import public
+
+    async def resolve_client_context(**kwargs):
+        return UniFiClientContext(
+            site_id="default",
+            site_name="Esdras",
+            client_id="client-1",
+            client=UniFiClientRecord(
+                id="client-1",
+                mac=kwargs["client_mac"],
+                site_id="default",
+                authorized=False,
+            ),
+        )
+
+    async def get_client_by_mac(site_id, mac):
+        return UniFiClientRecord(id="client-1", mac=mac, site_id=site_id, authorized=True)
+
+    async def authorize_guest(**kwargs):
+        return {"meta": {"rc": "ok"}}
+
+    monkeypatch.setattr(public.unifi_client, "resolve_client_context", resolve_client_context)
+    monkeypatch.setattr(public.unifi_client, "get_client_by_mac", get_client_by_mac)
+    monkeypatch.setattr(public.unifi_client, "authorize_guest", authorize_guest)
+
+    db = SessionLocal()
+    db.add(
+        Voucher(
+            code_hash=secret_hash("RFSECURE01"),
+            code_label="RF-SECURE-01",
+            duration_minutes=30,
+            device_limit=1,
+            site="Esdras",
+            site_id="default",
+            site_name_snapshot="Esdras",
+        )
+    )
+    db.commit()
+    db.close()
+
+    authorized = client.post(
+        "/api/auth/voucher",
+        json={
+            "clientMac": "aa:bb:cc:dd:ee:31",
+            "code": "RFSECURE01",
+            "termsAccepted": True,
+        },
+    )
+    assert authorized.status_code == 200
+    session_id = authorized.json()["sessionId"]
+
+    missing = client.get("/api/session/status?clientMac=aa:bb:cc:dd:ee:31")
+    assert missing.status_code == 422
+
+    wrong = client.get(
+        "/api/session/status?clientMac=aa:bb:cc:dd:ee:31&sessionId=gst_00000000000000000000000000000000"
+    )
+    assert wrong.status_code == 404
+
+    valid = client.get(
+        f"/api/session/status?clientMac=aa:bb:cc:dd:ee:31&sessionId={session_id}"
+    )
+    assert valid.status_code == 200
+    assert valid.json()["authorized"] is True
+
+
+@pytest.mark.asyncio
+async def test_public_session_end_requires_matching_session_id(client, monkeypatch):
+    from app.core.database import SessionLocal
+    from app.models import AuthorizationMethod
+    from app.services.sessions import authorize_session
+    from app.api import public
+
+    db = SessionLocal()
+    session = authorize_session(
+        db,
+        client_mac="aa:bb:cc:dd:ee:32",
+        site="default",
+        method=AuthorizationMethod.VOUCHER,
+        minutes=30,
+        unifi_client_id="client-32",
+    )
+    session_id = session.id
+    db.close()
+
+    calls = []
+
+    async def unauthorize_guest(**kwargs):
+        calls.append(kwargs)
+        return {"meta": {"rc": "ok"}}
+
+    monkeypatch.setattr(public.unifi_client, "unauthorize_guest", unauthorize_guest)
+
+    wrong = client.post(
+        "/api/session/end",
+        json={
+            "clientMac": "aa:bb:cc:dd:ee:32",
+            "sessionId": "gst_00000000000000000000000000000000",
+        },
+    )
+    assert wrong.status_code == 404
+    assert calls == []
+
+    valid = client.post(
+        "/api/session/end",
+        json={"clientMac": "aa:bb:cc:dd:ee:32", "sessionId": session_id},
+    )
+    assert valid.status_code == 200
+    assert calls == [{"site_id": "default", "client_id": "client-32"}]
+
+
+def test_public_readiness_does_not_expose_database_or_migration_details(client):
+    response = client.get(
+        "/health/ready",
+        headers={"host": "portal.gabineteitinerante.com.br"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
