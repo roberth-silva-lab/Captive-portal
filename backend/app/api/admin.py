@@ -13,15 +13,21 @@ from app.core.config import get_settings
 from app.core.database import engine, get_db
 from app.integrations.email.service import (
     EmailDeliveryError,
+    admin_access_change_email,
     admin_invitation_email,
     admin_login_code_email,
     admin_password_reset_code_email,
+    admin_reactivation_alert_email,
+    admin_reactivation_request_email,
+    admin_reactivation_result_email,
+    admin_suspension_email,
     send_email,
     voucher_email,
 )
 from app.integrations.unifi import UniFiError, unifi_client
 from app.models import (
     AdminInvitation,
+    AdminReactivationRequest,
     AdminRole,
     AdminSession,
     AdminSiteAccess,
@@ -51,6 +57,11 @@ from app.schemas.admin import (
     AdminLoginRequest,
     AdminMe,
     AdminPasswordResetConfirmRequest,
+    AdminReactivationRequestCreate,
+    AdminReactivationRequestResponse,
+    AdminReactivationReviewRequest,
+    AdminRoleUpdateRequest,
+    AdminStatusUpdateRequest,
     AdminPasswordResetRequest,
     AdminSiteAccessUpdateRequest,
     AllowedSiteResponse,
@@ -261,6 +272,72 @@ def admin_out(admin: AdminUser, db: Session | None = None) -> AdminMe:
 
 def audit(db: Session, admin: AdminUser, event: str, target_type: str, target_id: str, metadata: dict[str, Any] | None = None) -> None:
     db.add(AuditLog(actor_id=admin.id, event=event, target_type=target_type, target_id=target_id, metadata_json=json.dumps(metadata or {}, separators=(",", ":"))))
+
+
+def _revoke_admin_sessions(db: Session, admin_id: str) -> None:
+    revoked_at = utcnow()
+    sessions = db.scalars(
+        select(AdminSession).where(
+            AdminSession.admin_id == admin_id,
+            AdminSession.revoked_at.is_(None),
+        )
+    ).all()
+    for row in sessions:
+        row.revoked_at = revoked_at
+
+
+def _send_email_quietly(to_email: str, subject: str, text_body: str, html_body: str) -> bool:
+    try:
+        send_email(to_email, subject, text_body, html_body)
+        return True
+    except EmailDeliveryError:
+        return False
+
+
+def _notify_active_reviewers(db: Session, subject: str, text_body: str, html_body: str) -> None:
+    reviewers = db.scalars(
+        select(AdminUser).where(
+            AdminUser.role == AdminRole.SUPERADMIN,
+            AdminUser.is_active.is_(True),
+        )
+    ).all()
+    for reviewer in reviewers:
+        _send_email_quietly(reviewer.email, subject, text_body, html_body)
+
+
+def _suspend_admin(
+    db: Session,
+    target: AdminUser,
+    *,
+    reason: str,
+    suspended_by: str,
+    automatic: bool,
+) -> None:
+    now = utcnow()
+    target.is_active = False
+    target.suspended_at = now
+    target.suspended_reason = reason
+    target.suspended_by = suspended_by
+    if automatic:
+        target.locked_at = now
+    _revoke_admin_sessions(db, target.id)
+    text_body, html_body = admin_suspension_email(target.name, reason, automatic=automatic)
+    _send_email_quietly(target.email, "Acesso administrativo temporariamente suspenso", text_body, html_body)
+
+
+def _reactivation_out(row: AdminReactivationRequest, admin: AdminUser) -> AdminReactivationRequestResponse:
+    return AdminReactivationRequestResponse(
+        id=row.id,
+        adminId=admin.id,
+        adminName=admin.name,
+        adminEmail=admin.email,
+        message=row.message,
+        status=row.status,
+        requestedAt=row.requested_at,
+        reviewedAt=row.reviewed_at,
+        reviewedBy=row.reviewed_by,
+        resolutionNote=row.resolution_note,
+    )
 
 
 def _json_dict(raw: str) -> dict[str, Any]:
