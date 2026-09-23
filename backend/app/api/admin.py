@@ -786,6 +786,8 @@ def reset_admin_password(payload: AdminPasswordResetConfirmRequest, request: Req
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Código inválido ou expirado.")
     row.consumed_at = utcnow()
     admin.password_hash = hash_password(payload.password)
+    admin.failed_login_attempts = 0
+    admin.locked_at = None
     admin.updated_at = utcnow()
     revoked_at = utcnow()
     active_sessions = db.scalars(
@@ -1663,6 +1665,11 @@ def accept_admin_invitation(payload: AdminInviteAcceptRequest, db: Session = Dep
         admin.role = AdminRole(invite.role)
         admin.password_hash = hash_password(payload.password)
         admin.is_active = True
+        admin.failed_login_attempts = 0
+        admin.locked_at = None
+        admin.suspended_at = None
+        admin.suspended_reason = ""
+        admin.suspended_by = ""
         admin.updated_at = now
     invite.accepted_at = now
     site_ids = invitation_sites(invite.permitted_site_ids_json)
