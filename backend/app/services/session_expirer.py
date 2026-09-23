@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import timedelta
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -25,6 +26,12 @@ class ExpirationResult:
     expired: int = 0
     skipped_missing_unifi_context: int = 0
     failed_unifi: int = 0
+    renewed_unlimited: int = 0
+    failed_unlimited: int = 0
+
+
+UNLIMITED_UNIFI_GRANT_MINUTES = 1440
+UNLIMITED_REFRESH_INTERVAL = timedelta(hours=12)
 
 
 class GuestUnauthorizer:
@@ -148,10 +155,83 @@ async def expire_due_sessions_with_unifi(db: Session, unauthorizer: GuestUnautho
     return ExpirationResult(expired=expired, skipped_missing_unifi_context=skipped, failed_unifi=failed)
 
 
+async def refresh_unlimited_sessions_with_unifi(
+    db: Session,
+    unauthorizer: GuestUnauthorizer | None = None,
+    limit: int = 50,
+) -> ExpirationResult:
+    worker = unauthorizer or GuestUnauthorizer()
+    now = utcnow()
+    refresh_before = now - UNLIMITED_REFRESH_INTERVAL
+    sessions = db.scalars(
+        select(GuestSession)
+        .where(
+            GuestSession.status == SessionStatus.AUTHORIZED,
+            GuestSession.unlimited_access.is_(True),
+            (GuestSession.unifi_refresh_at.is_(None) | (GuestSession.unifi_refresh_at <= refresh_before)),
+        )
+        .order_by(GuestSession.unifi_refresh_at.asc().nullsfirst())
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    ).all()
+
+    renewed = 0
+    failed = 0
+    for session in sessions:
+        if not session.site:
+            session.unifi_refresh_at = now
+            _audit(db, "session.unlimited_refresh_skipped", session, {"reason": "missing_site"})
+            db.commit()
+            continue
+        try:
+            current = await _get_current_client(worker, session, db)
+            if current is None:
+                session.unifi_refresh_at = now
+                _audit(db, "session.unlimited_client_offline", session, {"site": session.site})
+                db.commit()
+                continue
+            if session.unifi_client_id != current.id:
+                session.unifi_client_id = current.id
+            await worker.authorize_guest(
+                site_id=session.site,
+                client_id=current.id,
+                minutes=UNLIMITED_UNIFI_GRANT_MINUTES,
+            )
+            confirmed = await _get_current_client(worker, session, db)
+            if confirmed is None or not confirmed.authorized:
+                failed += 1
+                _audit(db, "session.unlimited_refresh_not_confirmed", session, {"site": session.site, "clientId": current.id})
+                db.commit()
+                continue
+            session.unifi_client_id = confirmed.id
+            session.unifi_refresh_at = now
+            renewed += 1
+            _audit(
+                db,
+                "session.unlimited_refreshed",
+                session,
+                {"site": session.site, "clientId": confirmed.id, "rollingMinutes": UNLIMITED_UNIFI_GRANT_MINUTES},
+            )
+            db.commit()
+        except (UniFiError, TimeoutError) as exc:
+            failed += 1
+            db.rollback()
+            logger.warning("Could not refresh unlimited UniFi guest session %s: %s", session.id, exc.__class__.__name__)
+    return ExpirationResult(renewed_unlimited=renewed, failed_unlimited=failed)
+
+
 async def run_session_expirer_once(limit: int = 50) -> ExpirationResult:
     db = SessionLocal()
     try:
-        return await expire_due_sessions_with_unifi(db, limit=limit)
+        expired = await expire_due_sessions_with_unifi(db, limit=limit)
+        unlimited = await refresh_unlimited_sessions_with_unifi(db, limit=limit)
+        return ExpirationResult(
+            expired=expired.expired,
+            skipped_missing_unifi_context=expired.skipped_missing_unifi_context,
+            failed_unifi=expired.failed_unifi,
+            renewed_unlimited=unlimited.renewed_unlimited,
+            failed_unlimited=unlimited.failed_unlimited,
+        )
     finally:
         db.close()
 
@@ -166,8 +246,15 @@ async def session_expirer_loop(
     while not stop_event.is_set():
         try:
             result = await run_once(batch_size)
-            if result.expired or result.failed_unifi:
-                logger.info("Session expirer result: expired=%s failed_unifi=%s skipped_missing_context=%s", result.expired, result.failed_unifi, result.skipped_missing_unifi_context)
+            if result.expired or result.failed_unifi or result.renewed_unlimited or result.failed_unlimited:
+                logger.info(
+                    "Session expirer result: expired=%s failed_unifi=%s skipped_missing_context=%s renewed_unlimited=%s failed_unlimited=%s",
+                    result.expired,
+                    result.failed_unifi,
+                    result.skipped_missing_unifi_context,
+                    result.renewed_unlimited,
+                    result.failed_unlimited,
+                )
         except Exception:  # noqa: BLE001
             logger.exception("Session expirer loop failed.")
         try:
