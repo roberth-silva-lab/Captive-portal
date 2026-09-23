@@ -654,7 +654,20 @@ def _set_admin_session(admin: AdminUser, response: Response, db: Session) -> Non
     settings = get_settings()
     raw_session = random_token_urlsafe()
     raw_csrf = random_token_urlsafe()
-    db.add(AdminSession(id=secret_hash(raw_session), admin_id=admin.id, csrf_hash=secret_hash(raw_csrf), expires_at=utcnow() + timedelta(minutes=settings.admin_session_minutes)))
+    now = utcnow()
+    db.add(
+        AdminSession(
+            id=secret_hash(raw_session),
+            admin_id=admin.id,
+            csrf_hash=secret_hash(raw_csrf),
+            expires_at=now + timedelta(minutes=settings.admin_session_minutes),
+            last_seen_at=now,
+        )
+    )
+    admin.failed_login_attempts = 0
+    admin.locked_at = None
+    admin.last_login_at = now
+    admin.last_seen_at = now
     secure = settings.is_production
     response.set_cookie(settings.session_cookie_name, raw_session, httponly=True, secure=secure, samesite="lax", max_age=settings.admin_session_minutes * 60)
     response.set_cookie(settings.csrf_cookie_name, raw_csrf, httponly=False, secure=secure, samesite="lax", max_age=settings.admin_session_minutes * 60)
@@ -662,11 +675,26 @@ def _set_admin_session(admin: AdminUser, response: Response, db: Session) -> Non
 @router.post("/login", response_model=None)
 def login(payload: AdminLoginRequest, response: Response, request: Request, db: Session = Depends(get_db)):
     ip = client_ip(request)
+    admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower()))
+    if admin and not admin.is_active:
+        record_attempt(db, payload.email, ip, "admin-login", False, "account_suspended")
+        raise HTTPException(status.HTTP_423_LOCKED, "Conta temporariamente suspensa. Use Solicitar revisão para pedir a reativação.")
     enforce_rate_limit(db, payload.email, ip, "admin-login", max_attempts=5)
-    admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower(), AdminUser.is_active.is_(True)))
     if not admin or not verify_password(payload.password, admin.password_hash):
+        if admin:
+            admin.failed_login_attempts += 1
+            if admin.failed_login_attempts >= 5:
+                reason = "Cinco tentativas consecutivas de senha sem sucesso."
+                _suspend_admin(db, admin, reason=reason, suspended_by="system", automatic=True)
+                audit(db, admin, "admin.auto_suspended", "admin", admin.id, {"reason": "failed_password_attempts"})
+                db.commit()
+                record_attempt(db, payload.email, ip, "admin-login", False, "account_suspended")
+                raise HTTPException(status.HTTP_423_LOCKED, "Conta temporariamente suspensa por segurança. Use Solicitar revisão para pedir a reativação.")
+            db.commit()
         record_attempt(db, payload.email, ip, "admin-login", False, "invalid_credentials")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Credenciais inválidas.")
+    admin.failed_login_attempts = 0
+    admin.locked_at = None
     settings = get_settings()
     if settings.require_admin_email_mfa:
         code = _six_digit_code()
@@ -691,9 +719,22 @@ def login(payload: AdminLoginRequest, response: Response, request: Request, db: 
 @router.post("/login/verify-code", response_model=AdminMe)
 def verify_admin_login_code(payload: AdminLoginCodeRequest, response: Response, request: Request, db: Session = Depends(get_db)):
     ip = client_ip(request)
+    admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower()))
+    if admin and not admin.is_active:
+        record_attempt(db, payload.email, ip, "admin-login-code", False, "account_suspended")
+        raise HTTPException(status.HTTP_423_LOCKED, "Conta temporariamente suspensa. Use Solicitar revisão para pedir a reativação.")
     enforce_rate_limit(db, payload.email, ip, "admin-login-code", max_attempts=5)
-    admin = db.scalar(select(AdminUser).where(AdminUser.email == payload.email.lower(), AdminUser.is_active.is_(True)))
     if not admin or not verify_password(payload.password, admin.password_hash):
+        if admin:
+            admin.failed_login_attempts += 1
+            if admin.failed_login_attempts >= 5:
+                reason = "Cinco tentativas consecutivas de senha sem sucesso."
+                _suspend_admin(db, admin, reason=reason, suspended_by="system", automatic=True)
+                audit(db, admin, "admin.auto_suspended", "admin", admin.id, {"reason": "failed_password_attempts"})
+                db.commit()
+                record_attempt(db, payload.email, ip, "admin-login-code", False, "account_suspended")
+                raise HTTPException(status.HTTP_423_LOCKED, "Conta temporariamente suspensa por segurança. Use Solicitar revisão para pedir a reativação.")
+            db.commit()
         record_attempt(db, payload.email, ip, "admin-login-code", False, "invalid_credentials")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Código ou credenciais inválidas.")
     row = db.scalar(select(PasswordResetToken).where(PasswordResetToken.admin_id == admin.id, PasswordResetToken.token_hash == _admin_code_hash("admin-login", admin.id, payload.code), PasswordResetToken.consumed_at.is_(None)).order_by(PasswordResetToken.expires_at.desc()).limit(1))
