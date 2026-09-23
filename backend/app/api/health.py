@@ -13,6 +13,7 @@ EXPECTED_COLUMNS = {
         "code_hash",
         "code_label",
         "duration_minutes",
+        "unlimited_duration",
         "description",
         "created_by",
         "revoked_at",
@@ -23,7 +24,7 @@ EXPECTED_COLUMNS = {
     "admin_invitations": {"id", "email", "token_hash", "role", "permitted_site_ids_json"},
     "admin_site_access": {"id", "admin_id", "site_id"},
     "portal_site_settings": {"id", "site_id", "site_name", "display_name", "enabled", "auth_methods_json", "updated_at"},
-    "guest_sessions": {"id", "status", "client_mac", "site", "unifi_client_id", "ended_at", "ended_by", "admin_end_reason", "reauth_required_at"},
+    "guest_sessions": {"id", "status", "client_mac", "site", "unifi_client_id", "unlimited_access", "unifi_refresh_at", "ended_at", "ended_by", "admin_end_reason", "reauth_required_at"},
     "access_blocks": {"id", "site_id", "scope", "device_mac_hash", "reason", "created_by", "revoked_at"},
 }
 
