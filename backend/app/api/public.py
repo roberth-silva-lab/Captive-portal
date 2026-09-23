@@ -38,6 +38,7 @@ from app.schemas.public import (
     NotificationResponse,
     PortalSettingsResponse,
     ProvisionalAccessRequest,
+    SessionControlRequest,
     SessionStatusResponse,
     VoucherAuthRequest,
 )
@@ -413,11 +414,21 @@ async def extend_provisional(payload: ProvisionalAccessRequest, request: Request
 
 
 @router.get("/session/status", response_model=SessionStatusResponse)
-def session_status(clientMac: str | None = None, mac: str | None = None, db: Session = Depends(get_db)):
+def session_status(
+    sessionId: str | None = None,
+    clientMac: str | None = None,
+    mac: str | None = None,
+    db: Session = Depends(get_db),
+):
     selected_mac = clientMac or mac
-    if not selected_mac:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "clientMac obrigatorio.")
-    session = db.scalar(select(GuestSession).where(GuestSession.client_mac == selected_mac).order_by(GuestSession.created_at.desc()).limit(1))
+    if not selected_mac or not sessionId:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "sessionId e clientMac são obrigatórios.")
+    session = db.scalar(
+        select(GuestSession).where(
+            GuestSession.id == sessionId,
+            GuestSession.client_mac == selected_mac.lower(),
+        )
+    )
     if not session:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Sessão não encontrada.")
     if session.status == SessionStatus.AUTHORIZED and session.expires_at and session.expires_at <= utcnow() and not (session.site and session.unifi_client_id):
@@ -447,10 +458,15 @@ def session_status(clientMac: str | None = None, mac: str | None = None, db: Ses
 
 
 @router.post("/session/end")
-async def end_session(payload: ProvisionalAccessRequest, db: Session = Depends(get_db)):
-    session = db.scalar(select(GuestSession).where(GuestSession.client_mac == payload.clientMac).order_by(GuestSession.created_at.desc()).limit(1))
+async def end_session(payload: SessionControlRequest, db: Session = Depends(get_db)):
+    session = db.scalar(
+        select(GuestSession).where(
+            GuestSession.id == payload.sessionId,
+            GuestSession.client_mac == payload.clientMac,
+        )
+    )
     if not session:
-        return {"ok": True}
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sessão não encontrada.")
     session.status = SessionStatus.DISCONNECTED
     session.disconnected_at = utcnow()
     if session.authorized_at:
