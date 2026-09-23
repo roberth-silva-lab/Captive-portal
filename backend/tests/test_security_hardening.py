@@ -246,3 +246,49 @@ def test_public_readiness_does_not_expose_database_or_migration_details(client):
     )
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_admin_access_points_maps_legacy_radio_fields(client, admin_user, monkeypatch):
+    from app.api import admin as admin_api
+
+    class LegacyUniFi:
+        async def list_sites(self):
+            return [{"id": "default", "name": "Esdras"}]
+
+        async def list_clients(self, site_id, mac=None):
+            return [
+                {
+                    "_id": "client-1",
+                    "mac": "aa:bb:cc:dd:ee:41",
+                    "ap_mac": "11:22:33:44:55:66",
+                }
+            ]
+
+        async def list_access_points(self, site_id):
+            return [
+                {
+                    "_id": "ap-1",
+                    "name": "Esdras-Atendimento",
+                    "model": "U6-Lite",
+                    "mac": "11:22:33:44:55:66",
+                    "ip": "192.168.5.10",
+                    "state": 1,
+                    "uptime": 12345,
+                    "radio_table": [
+                        {"radio": "ng", "channel": 6},
+                        {"radio": "na", "channel": 44},
+                    ],
+                }
+            ]
+
+    monkeypatch.setattr(admin_api, "unifi_client", LegacyUniFi())
+    _login(client)
+
+    response = client.get("/api/admin/access-points?siteId=default")
+
+    assert response.status_code == 200
+    row = response.json()[0]
+    assert row["status"] == "connected"
+    assert row["clientes"] == 1
+    assert row["canal"] == "6 / 44"
+    assert row["banda"] == "2.4 GHz / 5 GHz"
