@@ -801,6 +801,55 @@ def reset_admin_password(payload: AdminPasswordResetConfirmRequest, request: Req
     return {"ok": True}
 
 
+@router.post("/support/reactivation-request")
+def request_admin_reactivation(
+    payload: AdminReactivationRequestCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    ip = client_ip(request)
+    email = payload.email.lower()
+    enforce_rate_limit(
+        db,
+        email,
+        ip,
+        "admin-reactivation-request",
+        max_attempts=3,
+        include_successes=True,
+    )
+    admin = db.scalar(select(AdminUser).where(AdminUser.email == email))
+    if admin and not admin.is_active:
+        pending = db.scalar(
+            select(AdminReactivationRequest)
+            .where(
+                AdminReactivationRequest.admin_id == admin.id,
+                AdminReactivationRequest.status == "PENDING",
+            )
+            .order_by(AdminReactivationRequest.requested_at.desc())
+            .limit(1)
+        )
+        if not pending:
+            pending = AdminReactivationRequest(admin_id=admin.id, message=payload.message.strip())
+            db.add(pending)
+            db.flush()
+            db.add(
+                AuditLog(
+                    actor_id=admin.id,
+                    event="admin.reactivation_requested",
+                    target_type="admin",
+                    target_id=admin.id,
+                    metadata_json="{}",
+                )
+            )
+            db.commit()
+            text_body, html_body = admin_reactivation_request_email(admin.name)
+            _send_email_quietly(admin.email, "Solicitação de revisão recebida", text_body, html_body)
+            alert_text, alert_html = admin_reactivation_alert_email(admin.name, admin.email, pending.message)
+            _notify_active_reviewers(db, "Nova solicitação de revisão de acesso", alert_text, alert_html)
+    record_attempt(db, email, ip, "admin-reactivation-request", True)
+    return {"ok": True, "message": "Se a conta estiver suspensa, a solicitação será encaminhada para análise."}
+
+
 @router.post("/logout", dependencies=[Depends(require_csrf)])
 def logout(response: Response, db: Session = Depends(get_db), admin: AdminUser = Depends(current_admin), session_cookie: str | None = Cookie(default=None, alias=get_settings().session_cookie_name)):
     settings = get_settings()
