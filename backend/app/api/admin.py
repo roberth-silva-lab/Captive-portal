@@ -373,8 +373,45 @@ def _device_id(row: dict[str, Any]) -> str:
 
 
 def _device_status(row: dict[str, Any]) -> str | None:
-    value = row.get("state") or row.get("status") or row.get("connectionState")
+    value = row.get("state")
+    if value == 1:
+        return "connected"
+    if value == 0:
+        return "disconnected"
+    value = value if value is not None else row.get("status") or row.get("connectionState")
     return str(value) if value is not None else None
+
+
+def _device_radio_summary(row: dict[str, Any]) -> tuple[str | int | None, str | None]:
+    raw = row.get("radio") or row.get("radioTable") or row.get("radio_table") or {}
+    radios = raw if isinstance(raw, list) else [raw] if isinstance(raw, dict) else []
+    channels: list[str] = []
+    bands: list[str] = []
+    for radio in radios:
+        channel = radio.get("channel")
+        if channel is not None:
+            label = str(channel)
+            if label not in channels:
+                channels.append(label)
+        band_raw = str(radio.get("band") or radio.get("radio") or "").strip().lower()
+        band = {
+            "ng": "2.4 GHz",
+            "2g": "2.4 GHz",
+            "2.4": "2.4 GHz",
+            "na": "5 GHz",
+            "5g": "5 GHz",
+            "6g": "6 GHz",
+            "6e": "6 GHz",
+        }.get(band_raw, str(radio.get("band") or "").strip())
+        if band and band not in bands:
+            bands.append(band)
+    channel_value: str | int | None
+    if channels:
+        channel_value = " / ".join(channels)
+    else:
+        channel_value = row.get("channel")
+    band_value = " / ".join(bands) if bands else (str(row.get("band")) if row.get("band") else None)
+    return channel_value, band_value
 
 
 def _client_mac(row: dict[str, Any]) -> str:
@@ -1448,7 +1485,7 @@ async def list_access_points(siteId: str | None = None, db: Session = Depends(ge
                 client_count_by_ap[ap_mac] = client_count_by_ap.get(ap_mac, 0) + 1
         for ap in await unifi_client.list_access_points(site_id):
             mac = _device_mac(ap)
-            radio = ap.get("radio") or ap.get("radioTable") or {}
+            channel, band = _device_radio_summary(ap)
             rows.append(
                 {
                     "id": _device_id(ap),
@@ -1461,8 +1498,8 @@ async def list_access_points(siteId: str | None = None, db: Session = Depends(ge
                     "status": _device_status(ap),
                     "uptime": ap.get("uptime") or ap.get("upTime"),
                     "clientes": client_count_by_ap.get(mac.lower(), None),
-                    "canal": ap.get("channel") or radio.get("channel"),
-                    "banda": ap.get("band") or radio.get("band"),
+                    "canal": channel,
+                    "banda": band,
                 }
             )
     return rows
