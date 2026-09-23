@@ -1611,6 +1611,11 @@ function MaintenanceAdminPanel({
       : maintenanceStatus === 'expired'
         ? 'A janela terminou. Escolha uma nova programação ou deixe o portal operacional.'
         : 'Nenhum visitante está vendo a tela de manutenção.'
+  const scheduleInvalid = mode === 'scheduled' && (
+    !maintenance.maintenanceStartAt
+    || !maintenance.maintenanceEndAt
+    || new Date(maintenance.maintenanceEndAt).getTime() <= new Date(maintenance.maintenanceStartAt).getTime()
+  )
 
   const setMode = (next: 'off' | 'now' | 'scheduled') => {
     if (!canManage) return
@@ -1720,6 +1725,7 @@ function MaintenanceAdminPanel({
                 <label htmlFor="maintenance-start">Início<input id="maintenance-start" type="datetime-local" value={datetimeLocal(maintenance.maintenanceStartAt)} onChange={(event) => onChange({ ...maintenance, maintenanceStartAt: fromDatetimeLocal(event.target.value) })} disabled={!canManage} /></label>
                 <label htmlFor="maintenance-end">Término<input id="maintenance-end" type="datetime-local" value={datetimeLocal(maintenance.maintenanceEndAt)} onChange={(event) => onChange({ ...maintenance, maintenanceEndAt: fromDatetimeLocal(event.target.value) })} disabled={!canManage} /></label>
               </div>
+              {scheduleInvalid ? <small className="field-error">Defina início e término, com o término depois do início.</small> : null}
             </section> : null}
 
             <section className="form-section maintenance-copy-card">
@@ -1742,7 +1748,7 @@ function MaintenanceAdminPanel({
               {uploadMessage ? <p className={uploadMessage.includes('Não') ? 'error' : 'panel-note'} role="status">{uploadMessage}</p> : null}
             </section>
 
-            {canManage ? <button className="primary admin-save" type="button" onClick={onSave} disabled={saving}>{saving ? 'Publicando...' : 'Salvar e publicar'}</button> : null}
+            {canManage ? <button className="primary admin-save" type="button" onClick={onSave} disabled={saving || scheduleInvalid}>{saving ? 'Publicando...' : 'Salvar e publicar'}</button> : null}
             {feedback ? <p className={feedback.includes('sucesso') ? 'success' : 'error'} role="status">{feedback}</p> : null}
           </div>
 
