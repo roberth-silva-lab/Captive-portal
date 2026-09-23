@@ -52,6 +52,7 @@ router = APIRouter(prefix="/api", tags=["public"])
 logger = logging.getLogger(__name__)
 media_router = APIRouter(tags=["media"])
 EXPIRATION_WARNINGS = [30, 10, 5]
+UNLIMITED_UNIFI_ROLLING_MINUTES = 1440
 
 
 def _ensure_client_not_blocked(db: Session, *, client_mac: str, site_id: str) -> None:
@@ -258,16 +259,18 @@ async def _authorize_unifi(db_or_payload, payload_or_minutes, minutes: int | Non
     return context.site_id, confirmed.id
 
 
-def _auth_response(session: GuestSession, minutes: int) -> AuthResponse:
-    if session.expires_at is None or session.authorized_at is None:
+def _auth_response(session: GuestSession, minutes: int | None) -> AuthResponse:
+    if session.authorized_at is None:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Sessão sem confirmação de autorização.")
-    total_seconds = duration_between(session.authorized_at, session.expires_at)
+    unlimited = bool(session.unlimited_access)
+    total_seconds = 0 if unlimited else duration_between(session.authorized_at, session.expires_at)
     return AuthResponse(
         sessionId=session.id,
-        sessionMinutes=minutes,
+        sessionMinutes=None if unlimited else minutes,
+        unlimited=unlimited,
         authorizedAt=session.authorized_at,
-        expiresAt=session.expires_at,
-        remainingSeconds=seconds_remaining(session),
+        expiresAt=None if unlimited else session.expires_at,
+        remainingSeconds=0 if unlimited else seconds_remaining(session),
         totalSeconds=total_seconds,
         authorized=True,
     )
@@ -300,18 +303,32 @@ async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Sessio
     if payload.clientMac not in used_devices and len(used_devices) >= max_devices:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "device_limit")
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Limite de dispositivos do voucher atingido.")
+    unlimited = bool(voucher.unlimited_duration)
     minutes = voucher.time_limit_minutes or voucher.duration_minutes
+    unifi_minutes = UNLIMITED_UNIFI_ROLLING_MINUTES if unlimited else minutes
     try:
-        await unifi_client.authorize_guest(site_id=context.site_id, client_id=context.client_id, minutes=minutes, data_limit_mb=voucher.data_limit_mb, rx_kbps=voucher.download_limit, tx_kbps=voucher.upload_limit)
+        await unifi_client.authorize_guest(site_id=context.site_id, client_id=context.client_id, minutes=unifi_minutes, data_limit_mb=voucher.data_limit_mb, rx_kbps=voucher.download_limit, tx_kbps=voucher.upload_limit)
         confirmed = await _confirm_unifi_authorized(context.site_id, payload.clientMac)
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "unifi_error")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível confirmar a autorização no UniFi.") from exc
-    session = authorize_session(db, client_mac=payload.clientMac, ap_mac=payload.apMac or "", ssid=payload.ssid or "", site=context.site_id, method=AuthorizationMethod.VOUCHER, minutes=minutes, unifi_client_id=confirmed.id, ip=payload.ip or ip, voucher_id=voucher.id)
+    session = authorize_session(
+        db,
+        client_mac=payload.clientMac,
+        ap_mac=payload.apMac or "",
+        ssid=payload.ssid or "",
+        site=context.site_id,
+        method=AuthorizationMethod.VOUCHER,
+        minutes=None if unlimited else minutes,
+        unlimited=unlimited,
+        unifi_client_id=confirmed.id,
+        ip=payload.ip or ip,
+        voucher_id=voucher.id,
+    )
     voucher.used_count += 1
     db.commit()
     record_attempt(db, payload.clientMac, ip, "voucher", True)
-    return _auth_response(session, minutes)
+    return _auth_response(session, None if unlimited else minutes)
 
 
 @router.post("/auth/cpf", response_model=AuthResponse)
@@ -435,18 +452,20 @@ def session_status(
         session.status = SessionStatus.EXPIRED
         session.duration_seconds = duration_between(session.authorized_at or session.created_at, session.expires_at)
         db.commit()
-    remaining = seconds_remaining(session)
-    warning_minutes = next((minutes for minutes in sorted(EXPIRATION_WARNINGS) if 0 < remaining <= minutes * 60), None)
-    total_seconds = duration_between(session.authorized_at, session.expires_at)
+    unlimited = bool(session.unlimited_access)
+    remaining = 0 if unlimited else seconds_remaining(session)
+    warning_minutes = None if unlimited else next((minutes for minutes in sorted(EXPIRATION_WARNINGS) if 0 < remaining <= minutes * 60), None)
+    total_seconds = 0 if unlimited else duration_between(session.authorized_at, session.expires_at)
     return SessionStatusResponse(
         status=session.status.value.lower(),
-        authorized=session.status == SessionStatus.AUTHORIZED and remaining > 0,
+        authorized=session.status == SessionStatus.AUTHORIZED and (unlimited or remaining > 0),
         authorizedAt=session.authorized_at,
         remainingSeconds=remaining,
         remainingMinutes=remaining // 60,
-        sessionMinutes=max(1, total_seconds // 60) if total_seconds else max(1, remaining // 60),
+        sessionMinutes=None if unlimited else (max(1, total_seconds // 60) if total_seconds else max(1, remaining // 60)),
+        unlimited=unlimited,
         totalSeconds=total_seconds,
-        expiresAt=session.expires_at,
+        expiresAt=None if unlimited else session.expires_at,
         serverNow=utcnow(),
         networkName="Wi-Fi Visitante",
         establishmentName="Gabinete Itinerante",
