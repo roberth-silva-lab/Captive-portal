@@ -17,6 +17,7 @@ from app.integrations.email.service import (
     admin_login_code_email,
     admin_password_reset_code_email,
     send_email,
+    voucher_email,
 )
 from app.integrations.unifi import UniFiError, unifi_client
 from app.models import (
@@ -543,6 +544,7 @@ def _voucher_out(voucher: Voucher) -> VoucherResponse:
         description=voucher.description,
         status=_voucher_status(voucher),
         durationMinutes=voucher.duration_minutes,
+        unlimitedDuration=voucher.unlimited_duration,
         timeLimitMinutes=voucher.time_limit_minutes,
         dataLimitMb=voucher.data_limit_mb,
         downloadLimit=voucher.download_limit,
@@ -864,7 +866,15 @@ async def sites(siteId: str | None = None, db: Session = Depends(get_db), admin:
 
 
 @router.post("/vouchers", response_model=VoucherBatchCreateResponse, dependencies=[Depends(require_csrf)])
-def create_vouchers(payload: VoucherCreateRequest, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
+def create_vouchers(
+    payload: VoucherCreateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(require_role(AdminRole.ADMIN)),
+):
+    if payload.deliveryEmail and payload.quantity != 1:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "O envio por e-mail está disponível para criação de um voucher por vez.")
+
     selected_site, site_name = _voucher_site_payload(db, admin, payload.siteId, payload.site)
     max_devices = payload.maxDevices or payload.deviceLimit
     created = []
@@ -879,6 +889,7 @@ def create_vouchers(payload: VoucherCreateRequest, db: Session = Depends(get_db)
             code_label=_voucher_label(code),
             description=payload.description,
             duration_minutes=payload.durationMinutes,
+            unlimited_duration=payload.unlimitedDuration,
             time_limit_minutes=payload.timeLimitMinutes,
             data_limit_mb=payload.dataLimitMb,
             download_limit=payload.downloadLimit,
@@ -894,10 +905,86 @@ def create_vouchers(payload: VoucherCreateRequest, db: Session = Depends(get_db)
         )
         db.add(voucher)
         db.flush()
-        created.append(CreatedVoucherCode(id=voucher.id, code=code, codeLabel=voucher.code_label, site=voucher.site_name_snapshot or voucher.site, durationMinutes=voucher.duration_minutes, expiresAt=voucher.expires_at))
-    audit(db, admin, "voucher.created", "voucher", "batch", {"siteId": selected_site, "siteName": site_name, "quantity": payload.quantity, "advancedLimitsStoredOnly": True})
+        created.append(
+            CreatedVoucherCode(
+                id=voucher.id,
+                code=code,
+                codeLabel=voucher.code_label,
+                site=voucher.site_name_snapshot or voucher.site,
+                durationMinutes=voucher.duration_minutes,
+                unlimitedDuration=voucher.unlimited_duration,
+                expiresAt=voucher.expires_at,
+            )
+        )
+    audit(
+        db,
+        admin,
+        "voucher.created",
+        "voucher",
+        "batch",
+        {
+            "siteId": selected_site,
+            "siteName": site_name,
+            "quantity": payload.quantity,
+            "unlimitedDuration": payload.unlimitedDuration,
+            "emailRequested": bool(payload.deliveryEmail),
+        },
+    )
     db.commit()
-    return VoucherBatchCreateResponse(created=len(created), vouchers=created)
+
+    delivery_status = "not_requested"
+    sent_to = payload.deliveryEmail
+    if payload.deliveryEmail and created:
+        ip = client_ip(request)
+        enforce_rate_limit(
+            db,
+            f"voucher-email:{admin.id}:{payload.deliveryEmail.lower()}",
+            ip,
+            "admin-voucher-email",
+            max_attempts=20,
+            include_successes=True,
+        )
+        created_voucher = created[0]
+        duration_label = "Sem limite (até encerramento manual)" if created_voucher.unlimitedDuration else f"{created_voucher.durationMinutes} minutos"
+        expires_label = created_voucher.expiresAt.strftime("%d/%m/%Y %H:%M UTC") if created_voucher.expiresAt else "Sem data limite"
+        text_body, html_body = voucher_email(
+            created_voucher.code,
+            site=created_voucher.site,
+            duration_label=duration_label,
+            max_devices=max_devices,
+            expires_label=expires_label,
+            description=payload.description,
+        )
+        try:
+            send_email(payload.deliveryEmail, "Seu voucher de acesso Wi-Fi", text_body, html_body)
+            delivery_status = "sent"
+            record_attempt(db, f"voucher-email:{admin.id}:{payload.deliveryEmail.lower()}", ip, "admin-voucher-email", True)
+        except EmailDeliveryError as exc:
+            delivery_status = "failed"
+            record_attempt(
+                db,
+                f"voucher-email:{admin.id}:{payload.deliveryEmail.lower()}",
+                ip,
+                "admin-voucher-email",
+                False,
+                getattr(exc, "reason", "smtp_error"),
+            )
+        audit(
+            db,
+            admin,
+            "voucher.email_delivery",
+            "voucher",
+            created_voucher.id,
+            {"status": delivery_status},
+        )
+        db.commit()
+
+    return VoucherBatchCreateResponse(
+        created=len(created),
+        vouchers=created,
+        emailDeliveryStatus=delivery_status,
+        emailSentTo=sent_to,
+    )
 
 
 @router.get("/vouchers", response_model=list[VoucherResponse])
@@ -925,6 +1012,7 @@ def update_voucher(voucher_id: str, payload: VoucherUpdateRequest, db: Session =
     selected_site, site_name = _voucher_site_payload(db, admin, payload.siteId, payload.site)
     voucher.description = payload.description
     voucher.duration_minutes = payload.durationMinutes
+    voucher.unlimited_duration = payload.unlimitedDuration
     voucher.time_limit_minutes = payload.timeLimitMinutes
     voucher.data_limit_mb = payload.dataLimitMb
     voucher.download_limit = payload.downloadLimit
