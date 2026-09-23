@@ -686,7 +686,7 @@ def login(payload: AdminLoginRequest, response: Response, request: Request, db: 
             if admin.failed_login_attempts >= 5:
                 reason = "Cinco tentativas consecutivas de senha sem sucesso."
                 _suspend_admin(db, admin, reason=reason, suspended_by="system", automatic=True)
-                audit(db, admin, "admin.auto_suspended", "admin", admin.id, {"reason": "failed_password_attempts"})
+                db.add(AuditLog(actor_id="system", event="admin.auto_suspended", target_type="admin", target_id=admin.id, metadata_json=json.dumps({"reason": "failed_password_attempts"}, separators=(",", ":"))))
                 db.commit()
                 record_attempt(db, payload.email, ip, "admin-login", False, "account_suspended")
                 raise HTTPException(status.HTTP_423_LOCKED, "Conta temporariamente suspensa por segurança. Use Solicitar revisão para pedir a reativação.")
