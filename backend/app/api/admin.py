@@ -388,10 +388,24 @@ def _client_id(row: dict[str, Any]) -> str:
 def _client_ap_mac(row: dict[str, Any]) -> str:
     uplink = row.get("uplinkDevice") or {}
     wifi = row.get("wifiConnection") or {}
-    return str(uplink.get("macAddress") or uplink.get("mac") or wifi.get("apMacAddress") or row.get("apMac") or "")
+    access_point = row.get("accessPoint") or {}
+    return str(
+        access_point.get("macAddress")
+        or access_point.get("mac")
+        or uplink.get("macAddress")
+        or uplink.get("mac")
+        or wifi.get("apMacAddress")
+        or wifi.get("apMac")
+        or row.get("apMacAddress")
+        or row.get("apMac")
+        or row.get("ap_mac")
+        or ""
+    )
 
 
 def _client_authorized(row: dict[str, Any]) -> bool:
+    if "authorized" in row:
+        return bool(row.get("authorized"))
     access = row.get("access") or {}
     return bool(access.get("authorized"))
 
@@ -615,6 +629,15 @@ def reset_admin_password(payload: AdminPasswordResetConfirmRequest, request: Req
     row.consumed_at = utcnow()
     admin.password_hash = hash_password(payload.password)
     admin.updated_at = utcnow()
+    revoked_at = utcnow()
+    active_sessions = db.scalars(
+        select(AdminSession).where(
+            AdminSession.admin_id == admin.id,
+            AdminSession.revoked_at.is_(None),
+        )
+    ).all()
+    for active_session in active_sessions:
+        active_session.revoked_at = revoked_at
     db.commit()
     record_attempt(db, payload.email, ip, "admin-password-reset", True)
     return {"ok": True}
@@ -1401,7 +1424,8 @@ async def list_users(siteId: str | None = None, db: Session = Depends(get_db), a
                     "siteName": _unifi_site_name(site),
                     "apMac": _client_ap_mac(client),
                     "authorized": _client_authorized(client),
-                    "ssid": (client.get("wifiConnection") or {}).get("ssid") or client.get("ssid"),
+                    "ssid": (client.get("wifiConnection") or {}).get("ssid") or client.get("ssid") or client.get("essid"),
+                    "signal": client.get("signal"),
                     **_client_portal_session(db, _client_mac(client)),
                 }
             )
