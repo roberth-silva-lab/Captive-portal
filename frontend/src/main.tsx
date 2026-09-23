@@ -335,7 +335,7 @@ function Portal() {
     try {
       await wait(220)
       setStage('authorizing')
-      setMessage('Solicitando autorização na rede...')
+      setMessage('Liberando seu acesso à rede...')
       const path = method === 'voucher' ? '/api/auth/voucher' : method === 'cpf' ? '/api/auth/cpf' : '/api/auth/email/verify-code'
       const body = method === 'voucher'
         ? { ...basePayload, code: normalizeVoucher(identifier) }
@@ -344,7 +344,7 @@ function Portal() {
           : { ...basePayload, email: identifier.trim(), code: emailCode }
       const result = await api<AuthResponse>(path, { method: 'POST', body: JSON.stringify(body) })
       setStage('confirming')
-      if (!result.authorized) throw new Error('O UniFi ainda não confirmou a autorização.')
+      if (!result.authorized) throw new Error('Ainda estamos liberando seu acesso. Aguarde alguns segundos e tente novamente.')
       await wait(220)
       setSession({
         sessionId: result.sessionId,
