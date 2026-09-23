@@ -201,12 +201,13 @@ function Portal() {
   }, [params.apMac, params.clientMac, params.site])
 
   useEffect(() => {
-    if (!params.clientMac || stage !== 'released') return
-    const tick = () => api<SessionStatus>(`/api/session/status?clientMac=${encodeURIComponent(params.clientMac)}`).then((current) => { setSession(current); if (!current.authorized) { setStage('idle'); setMessage(settings?.expiredMessage || 'Sua sessão expirou. Autentique-se novamente para continuar usando o Wi-Fi.'); setMessageTone('error') } }).catch(() => undefined)
+    if (!params.clientMac || !session?.sessionId || stage !== 'released') return
+    const currentSessionId = session.sessionId
+    const tick = () => api<SessionStatus>(`/api/session/status?clientMac=${encodeURIComponent(params.clientMac)}&sessionId=${encodeURIComponent(currentSessionId)}`).then((current) => { setSession({ ...current, sessionId: currentSessionId }); if (!current.authorized) { setStage('idle'); setMessage(settings?.expiredMessage || 'Sua sessão expirou. Autentique-se novamente para continuar usando o Wi-Fi.'); setMessageTone('error') } }).catch(() => undefined)
     tick()
     const handle = window.setInterval(tick, 30000)
     return () => window.clearInterval(handle)
-  }, [params.clientMac, settings?.expiredMessage, stage])
+  }, [params.clientMac, session?.sessionId, settings?.expiredMessage, stage])
 
   useEffect(() => {
     if (emailCooldown <= 0) return
@@ -346,6 +347,7 @@ function Portal() {
       if (!result.authorized) throw new Error('O UniFi ainda não confirmou a autorização.')
       await wait(220)
       setSession({
+        sessionId: result.sessionId,
         status: 'authorized',
         authorized: true,
         authorizedAt: result.authorizedAt,
