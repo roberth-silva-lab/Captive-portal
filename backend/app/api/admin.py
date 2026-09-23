@@ -1685,19 +1685,185 @@ def update_admin_site_access(admin_id: str, payload: AdminSiteAccessUpdateReques
     audit(db, admin, "admin.site_access_granted", "admin", target.id, {"siteIds": payload.siteIds})
     db.commit()
     return {"ok": True, "siteIds": payload.siteIds}
+
+
+@router.put("/admins/{admin_id}/role", dependencies=[Depends(require_csrf)])
+def update_admin_role(
+    admin_id: str,
+    payload: AdminRoleUpdateRequest,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN)),
+):
+    target = db.get(AdminUser, admin_id)
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Administrador não encontrado.")
+    if target.id == admin.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Não é possível alterar o próprio perfil.")
+    if target.role == AdminRole.SUPERADMIN:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "O perfil global não pode ser alterado por esta ação.")
+    if payload.role == AdminRole.SUPERADMIN:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Use o fluxo de convite para conceder acesso global.")
+    old_role = target.role
+    if old_role == payload.role:
+        return {"ok": True, "role": target.role.value}
+    target.role = payload.role
+    target.updated_at = utcnow()
+    audit(
+        db,
+        admin,
+        "admin.role_changed",
+        "admin",
+        target.id,
+        {"from": old_role.value, "to": payload.role.value},
+    )
+    db.commit()
+    text_body, html_body = admin_access_change_email(target.name, old_role.value, payload.role.value)
+    _send_email_quietly(target.email, "Seu perfil de acesso foi atualizado", text_body, html_body)
+    return {"ok": True, "role": target.role.value}
+
+
+@router.put("/admins/{admin_id}/status", dependencies=[Depends(require_csrf)])
+def update_admin_status(
+    admin_id: str,
+    payload: AdminStatusUpdateRequest,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN)),
+):
+    target = db.get(AdminUser, admin_id)
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Administrador não encontrado.")
+    if target.id == admin.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Não é possível suspender ou reativar a própria conta.")
+    if target.role == AdminRole.SUPERADMIN:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "O acesso global não pode ser suspenso por esta ação.")
+
+    if payload.active:
+        target.is_active = True
+        target.failed_login_attempts = 0
+        target.locked_at = None
+        target.suspended_at = None
+        target.suspended_reason = ""
+        target.suspended_by = ""
+        pending = db.scalars(
+            select(AdminReactivationRequest).where(
+                AdminReactivationRequest.admin_id == target.id,
+                AdminReactivationRequest.status == "PENDING",
+            )
+        ).all()
+        now = utcnow()
+        for request_row in pending:
+            request_row.status = "APPROVED"
+            request_row.reviewed_at = now
+            request_row.reviewed_by = admin.id
+            request_row.resolution_note = payload.reason.strip()
+        audit(db, admin, "admin.reactivated", "admin", target.id, {"reason": payload.reason.strip()})
+        db.commit()
+        text_body, html_body = admin_reactivation_result_email(target.name, True, payload.reason)
+        _send_email_quietly(target.email, "Acesso administrativo reativado", text_body, html_body)
+        return {"ok": True, "status": "active"}
+
+    reason = payload.reason.strip() or "Acesso suspenso para revisão administrativa."
+    _suspend_admin(db, target, reason=reason, suspended_by=admin.id, automatic=False)
+    audit(db, admin, "admin.suspended", "admin", target.id, {"reason": reason})
+    db.commit()
+    return {"ok": True, "status": "suspended"}
+
+
+@router.get("/admins/reactivation-requests", response_model=list[AdminReactivationRequestResponse])
+def list_admin_reactivation_requests(
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN)),
+):
+    rows = db.scalars(
+        select(AdminReactivationRequest)
+        .order_by(AdminReactivationRequest.requested_at.desc())
+        .limit(100)
+    ).all()
+    result: list[AdminReactivationRequestResponse] = []
+    for row in rows:
+        target = db.get(AdminUser, row.admin_id)
+        if target:
+            result.append(_reactivation_out(row, target))
+    return result
+
+
+@router.post("/admins/reactivation-requests/{request_id}/review", dependencies=[Depends(require_csrf)])
+def review_admin_reactivation_request(
+    request_id: str,
+    payload: AdminReactivationReviewRequest,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN)),
+):
+    row = db.get(AdminReactivationRequest, request_id)
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Solicitação não encontrada.")
+    if row.status != "PENDING":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Esta solicitação já foi analisada.")
+    target = db.get(AdminUser, row.admin_id)
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conta administrativa não encontrada.")
+    if target.role == AdminRole.SUPERADMIN:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Esta conta não pode ser alterada por este fluxo.")
+
+    now = utcnow()
+    row.reviewed_at = now
+    row.reviewed_by = admin.id
+    row.resolution_note = payload.note.strip()
+    if payload.approved:
+        row.status = "APPROVED"
+        target.is_active = True
+        target.failed_login_attempts = 0
+        target.locked_at = None
+        target.suspended_at = None
+        target.suspended_reason = ""
+        target.suspended_by = ""
+        audit(db, admin, "admin.reactivation_approved", "admin", target.id, {"requestId": row.id})
+    else:
+        row.status = "REJECTED"
+        audit(db, admin, "admin.reactivation_rejected", "admin", target.id, {"requestId": row.id})
+    db.commit()
+    text_body, html_body = admin_reactivation_result_email(target.name, payload.approved, payload.note)
+    _send_email_quietly(
+        target.email,
+        "Resultado da revisão de acesso",
+        text_body,
+        html_body,
+    )
+    return {"ok": True, "status": row.status}
+
+
 @router.get("/admins")
 def list_admins(_admin: AdminUser = Depends(require_role(AdminRole.SUPERADMIN)), db: Session = Depends(get_db)):
     rows = db.scalars(select(AdminUser).order_by(AdminUser.created_at.desc())).all()
+    now = utcnow()
+    cutoff = now - timedelta(minutes=5)
+    active_session_rows = db.execute(
+        select(AdminSession.admin_id, func.max(AdminSession.last_seen_at))
+        .where(
+            AdminSession.revoked_at.is_(None),
+            AdminSession.expires_at > now,
+            AdminSession.last_seen_at >= cutoff,
+        )
+        .group_by(AdminSession.admin_id)
+    ).all()
+    online_map = {admin_id: last_seen for admin_id, last_seen in active_session_rows}
     return [
         {
             "id": row.id,
             "name": row.name,
             "email": row.email,
             "role": row.role.value,
-            "status": "active" if row.is_active else "inactive",
-            "mfa": "not_configured",
+            "status": "active" if row.is_active else "suspended",
+            "mfa": "enabled" if get_settings().require_admin_email_mfa else "optional",
+            "siteIds": allowed_site_ids(db, row) or [],
+            "canSelectAllSites": row.role == AdminRole.SUPERADMIN,
             "createdAt": row.created_at,
-            "lastLogin": None,
+            "lastLogin": row.last_login_at,
+            "lastSeenAt": online_map.get(row.id) or row.last_seen_at,
+            "online": row.id in online_map,
+            "failedLoginAttempts": row.failed_login_attempts,
+            "suspendedAt": row.suspended_at,
+            "suspendedReason": row.suspended_reason,
         }
         for row in rows
     ]
