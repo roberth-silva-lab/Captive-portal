@@ -125,10 +125,10 @@ def test_admin_users_maps_legacy_unifi_fields(client, admin_user, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_public_session_status_requires_matching_session_id(client, monkeypatch):
+    from app.api import public
     from app.core.database import SessionLocal
     from app.models import Voucher
     from app.security.tokens import secret_hash
-    from app.api import public
 
     async def resolve_client_context(**kwargs):
         return UniFiClientContext(
@@ -196,10 +196,10 @@ async def test_public_session_status_requires_matching_session_id(client, monkey
 
 @pytest.mark.asyncio
 async def test_public_session_end_requires_matching_session_id(client, monkeypatch):
+    from app.api import public
     from app.core.database import SessionLocal
     from app.models import AuthorizationMethod
     from app.services.sessions import authorize_session
-    from app.api import public
 
     db = SessionLocal()
     session = authorize_session(
