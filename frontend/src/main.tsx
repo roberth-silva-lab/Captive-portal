@@ -35,6 +35,7 @@ import type {
   AccessPoint,
   AdminInviteResponse,
   AdminLoginChallenge,
+  AdminReactivationRequestRow,
   AdminMe,
   AllowedSite,
   AdminNotice,
@@ -463,6 +464,7 @@ function Admin() {
   const [sessions, setSessions] = useState<GuestSessionRow[]>([])
   const [admins, setAdmins] = useState<AdminUserRow[]>([])
   const [adminInvitations, setAdminInvitations] = useState<AdminInviteResponse[]>([])
+  const [reactivationRequests, setReactivationRequests] = useState<AdminReactivationRequestRow[]>([])
   const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null)
   const [authAttempts, setAuthAttempts] = useState<AuthAttemptRow[]>([])
   const [testingEmail, setTestingEmail] = useState(false)
@@ -517,7 +519,7 @@ function Admin() {
     loadInFlight.current = true
     setRefreshing(true)
     try {
-      const [me, allowedSiteRows, dash, chartRows, maint, appearanceRow, selectedAppearanceRow, siteRows, noticeRows, auditRows, voucherRows, visitorRows, accessPointRows, sessionRows, adminRows, invitationRows, healthRow, attemptRows] = await Promise.all([
+      const [me, allowedSiteRows, dash, chartRows, maint, appearanceRow, selectedAppearanceRow, siteRows, noticeRows, auditRows, voucherRows, visitorRows, accessPointRows, sessionRows, adminRows, invitationRows, reactivationRows, healthRow, attemptRows] = await Promise.all([
         api<AdminMe>('/api/admin/me'),
         api<AllowedSite[]>('/api/admin/sites/allowed').catch(() => []),
         api<Dashboard>(scopedPath('/api/admin/dashboard')),
@@ -534,6 +536,7 @@ function Admin() {
         api<GuestSessionRow[]>(scopedPath('/api/admin/sessions')).catch(() => []),
         api<AdminUserRow[]>('/api/admin/admins').catch(() => []),
         api<AdminInviteResponse[]>('/api/admin/admins/invitations').catch(() => []),
+        api<AdminReactivationRequestRow[]>('/api/admin/admins/reactivation-requests').catch(() => []),
         api<SystemHealth>('/api/admin/system-health').catch(() => null),
         api<AuthAttemptRow[]>('/api/admin/auth-attempts').catch(() => []),
       ])
@@ -558,6 +561,7 @@ function Admin() {
     setSessions(asArray(sessionRows))
       setAdmins(asArray(adminRows))
       setAdminInvitations(asArray(invitationRows))
+      setReactivationRequests(asArray(reactivationRows))
       setSystemHealth(healthRow)
       setAuthAttempts(asArray(attemptRows))
       setLoadStatus('ready')
@@ -627,6 +631,13 @@ function Admin() {
 
   const requestPasswordReset = async (targetEmail: string) => {
     await api<{ ok: boolean }>('/api/admin/password/forgot', { method: 'POST', body: JSON.stringify({ email: targetEmail }) })
+  }
+
+  const requestAccessReview = async (targetEmail: string, message: string) => {
+    await api<{ ok: boolean; message: string }>('/api/admin/support/reactivation-request', {
+      method: 'POST',
+      body: JSON.stringify({ email: targetEmail, message }),
+    })
   }
 
   const resetPassword = async (targetEmail: string, code: string, newPassword: string, confirmPassword: string) => {
@@ -762,7 +773,7 @@ function Admin() {
   }
 
   if (!dashboard || loadStatus === 'unauthenticated') {
-    return <AdminLogin email={email} password={password} error={error} onEmail={setEmail} onPassword={setPassword} onLogin={login} onRequestPasswordReset={requestPasswordReset} onResetPassword={resetPassword} />
+    return <AdminLogin email={email} password={password} error={error} onEmail={setEmail} onPassword={setPassword} onLogin={login} onRequestPasswordReset={requestPasswordReset} onResetPassword={resetPassword} onRequestAccessReview={requestAccessReview} />
   }
 
   return (
@@ -781,7 +792,7 @@ function Admin() {
           {activeSection === 'sites' ? <SitesPanel sites={sites} onOpen={openSiteDetail} /> : null}
           {activeSection === 'site-detail' ? <SiteDetailPanel siteId={detailSiteId || selectedSiteId} sites={sites} visitors={visitors} sessions={sessions} accessPoints={accessPoints} vouchers={vouchers} notices={notices} maintenance={maintenance} onBack={leaveSiteDetail} onOpenSection={(section) => setActiveSection(section)} /> : null}
           {activeSection === 'access-points' ? <AccessPointsPanel accessPoints={accessPoints} /> : null}
-          {activeSection === 'admins' ? <AdminsPanel admin={admin} admins={admins} invitations={adminInvitations} allowedSites={allowedSites} onChanged={load} onToast={notifyAdmin} /> : null}
+          {activeSection === 'admins' ? <AdminsPanel admin={admin} admins={admins} invitations={adminInvitations} reactivationRequests={reactivationRequests} allowedSites={allowedSites} onChanged={load} onToast={notifyAdmin} /> : null}
           {activeSection === 'audit' ? <AuditPanel audit={audit} /> : null}
           {activeSection === 'portal-sites' ? <PortalSitesPanel sites={sites} allowedSites={allowedSites} selectedSiteId={selectedSiteId} onSelectSite={handleSiteChange} onOpenPortal={(tab = 'visual') => { setPortalEditorTab(tab); setActiveSection('portal'); window.history.pushState(null, '', '/admin/portal') }} onOpenMaintenance={() => { setActiveSection('maintenance'); window.history.pushState(null, '', '/admin/maintenance') }} onChanged={load} onToast={notifyAdmin} /> : null}
           {activeSection === 'portal' ? appearance ? <SettingsPanel admin={admin} maintenance={maintenance} appearance={selectedSiteId !== 'ALL' && siteAppearance ? siteAppearance : appearance} allowedSites={allowedSites} selectedSiteId={selectedSiteId} siteAppearance={siteAppearance} notices={notices} activeTab={portalEditorTab} saving={appearanceSaving} feedback={appearanceMessage} onTabChange={setPortalEditorTab} onChange={(value) => selectedSiteId !== 'ALL' && siteAppearance ? setSiteAppearance({ ...siteAppearance, ...value }) : setAppearance(value)} onSave={saveAppearance} onResetSite={resetSiteAppearance} /> : <AdminRouteState title="Portal público" message="Configurações do portal ainda não carregadas." /> : null}
