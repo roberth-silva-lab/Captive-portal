@@ -9,7 +9,47 @@ def login(client, email="admin@example.com", password="StrongPassword123!"):
     return client.cookies.get("portal_csrf") or ""
 
 
-def test_admin_is_suspended_after_five_bad_passwords(client, admin_user, monkeypatch):
+def test_admin_is_suspended_after_five_bad_passwords(client, monkeypatch):
+    monkeypatch.setattr("app.api.admin.send_email", lambda *args, **kwargs: None)
+
+    db = SessionLocal()
+    user = AdminUser(
+        email="operator@example.com",
+        name="Operator",
+        role=AdminRole.ADMIN,
+        password_hash=hash_password("StrongPassword123!"),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    user_id = user.id
+    db.close()
+
+    for _ in range(4):
+        response = client.post(
+            "/api/admin/login",
+            json={"email": "operator@example.com", "password": "WrongPassword123!"},
+        )
+        assert response.status_code == 401
+
+    fifth = client.post(
+        "/api/admin/login",
+        json={"email": "operator@example.com", "password": "WrongPassword123!"},
+    )
+    assert fifth.status_code == 423
+    assert "suspensa" in fifth.json()["detail"].lower()
+
+    db = SessionLocal()
+    row = db.get(AdminUser, user_id)
+    assert row is not None
+    assert row.is_active is False
+    assert row.failed_login_attempts == 5
+    assert row.locked_at is not None
+    assert row.suspended_at is not None
+    db.close()
+
+
+def test_global_admin_is_throttled_but_not_suspended_after_five_bad_passwords(client, admin_user, monkeypatch):
     monkeypatch.setattr("app.api.admin.send_email", lambda *args, **kwargs: None)
 
     for _ in range(4):
@@ -23,16 +63,15 @@ def test_admin_is_suspended_after_five_bad_passwords(client, admin_user, monkeyp
         "/api/admin/login",
         json={"email": "admin@example.com", "password": "WrongPassword123!"},
     )
-    assert fifth.status_code == 423
-    assert "suspensa" in fifth.json()["detail"].lower()
+    assert fifth.status_code == 429
 
     db = SessionLocal()
     row = db.get(AdminUser, admin_user.id)
     assert row is not None
-    assert row.is_active is False
+    assert row.is_active is True
     assert row.failed_login_attempts == 5
     assert row.locked_at is not None
-    assert row.suspended_at is not None
+    assert row.suspended_at is None
     db.close()
 
 
