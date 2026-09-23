@@ -336,7 +336,7 @@ async def request_email_code(payload: EmailCodeRequest, request: Request, db: Se
         ensure_not_in_maintenance(db, context.site_id)
         ensure_auth_method_allowed(db, context.site_id, "email")
     except UniFiError as exc:
-        record_attempt(db, payload.clientMac, ip, "email", False, "unifi_error")
+        record_attempt(db, payload.email.lower(), ip, "email", False, "unifi_error")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível identificar a unidade no UniFi.") from exc
     code = str(int(random_token_urlsafe(4).encode().hex(), 16))[-6:].zfill(6)
     ttl_minutes = get_settings().email_code_ttl_minutes
@@ -352,11 +352,11 @@ async def request_email_code(payload: EmailCodeRequest, request: Request, db: Se
     except EmailDeliveryError as exc:
         db.rollback()
         reason = getattr(exc, "reason", "smtp_error")
-        record_attempt(db, payload.clientMac, ip, "email", False, reason)
+        record_attempt(db, payload.email.lower(), ip, "email", False, reason)
         logger.warning("Public email code delivery failed", extra={"reason": reason})
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Não foi possível enviar o código por e-mail agora. Tente novamente em instantes.") from exc
     db.commit()
-    record_attempt(db, payload.clientMac, ip, "email", True)
+    record_attempt(db, payload.email.lower(), ip, "email", True)
     return {"expiresAt": expires_at}
 
 
