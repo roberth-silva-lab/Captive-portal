@@ -290,7 +290,7 @@ async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Sessio
         context = await unifi_client.resolve_client_context(client_mac=payload.clientMac, ap_mac=payload.apMac, requested_site=None)
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "unifi_error")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível identificar o site real no UniFi.") from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível identificar a unidade da rede para este dispositivo.") from exc
     ensure_not_in_maintenance(db, context.site_id)
     voucher_site = voucher.site_id or voucher.site
     if voucher_site and voucher_site not in {"ALL", "global", context.site_id, context.site_name}:
@@ -311,7 +311,7 @@ async def auth_voucher(payload: VoucherAuthRequest, request: Request, db: Sessio
         confirmed = await _confirm_unifi_authorized(context.site_id, payload.clientMac)
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "voucher", False, "unifi_error")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível confirmar a autorização no UniFi.") from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível confirmar a liberação do acesso. Aguarde alguns segundos e tente novamente.") from exc
     session = authorize_session(
         db,
         client_mac=payload.clientMac,
@@ -339,7 +339,7 @@ async def auth_cpf(payload: CpfAuthRequest, request: Request, db: Session = Depe
         site_id, client_id = await _authorize_unifi(db, payload, 60, auth_method="cpf")
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "cpf", False, "unifi_error")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível confirmar a autorização no UniFi.") from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível confirmar a liberação do acesso. Aguarde alguns segundos e tente novamente.") from exc
     session = authorize_session(db, client_mac=payload.clientMac, ap_mac=payload.apMac or "", ssid=payload.ssid or "", site=site_id, method=AuthorizationMethod.CPF, minutes=60, unifi_client_id=client_id, name=payload.name, cpf=payload.cpf, phone=payload.phone or "", ip=payload.ip or ip)
     record_attempt(db, payload.clientMac, ip, "cpf", True)
     return _auth_response(session, 60)
@@ -355,7 +355,7 @@ async def request_email_code(payload: EmailCodeRequest, request: Request, db: Se
         ensure_auth_method_allowed(db, context.site_id, "email")
     except UniFiError as exc:
         record_attempt(db, payload.email.lower(), ip, "email", False, "unifi_error")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível identificar a unidade no UniFi.") from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível identificar a unidade da rede para este dispositivo.") from exc
     code = str(int(random_token_urlsafe(4).encode().hex(), 16))[-6:].zfill(6)
     ttl_minutes = get_settings().email_code_ttl_minutes
     expires_at = utcnow() + timedelta(minutes=ttl_minutes)
@@ -401,7 +401,7 @@ async def verify_email_code(payload: EmailCodeVerify, request: Request, db: Sess
         site_id, client_id = await _authorize_unifi(db, payload, 60, auth_method="email")
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, "email-verify", False, "unifi_error")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível confirmar a autorização no UniFi.") from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível confirmar a liberação do acesso. Aguarde alguns segundos e tente novamente.") from exc
     session = authorize_session(db, client_mac=payload.clientMac, ap_mac=payload.apMac or "", ssid=payload.ssid or "", site=site_id, method=AuthorizationMethod.EMAIL, minutes=60, unifi_client_id=client_id, email=payload.email, ip=payload.ip or ip)
     record_attempt(db, payload.clientMac, ip, "email-verify", True)
     return _auth_response(session, 60)
@@ -414,7 +414,7 @@ async def _provisional(payload: ProvisionalAccessRequest, request: Request, db: 
         site_id, client_id = await _authorize_unifi(db, payload, minutes)
     except UniFiError as exc:
         record_attempt(db, payload.clientMac, ip, method, False, "unifi_error")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível confirmar acesso provisório no UniFi.") from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Não foi possível liberar o acesso provisório. Aguarde alguns segundos e tente novamente.") from exc
     authorize_session(db, client_mac=payload.clientMac, ap_mac=payload.apMac or "", ssid=payload.ssid or "", site=site_id, method=AuthorizationMethod.PROVISIONAL, minutes=minutes, unifi_client_id=client_id, ip=payload.ip or ip)
     record_attempt(db, payload.clientMac, ip, method, True)
     return {"ok": True}
