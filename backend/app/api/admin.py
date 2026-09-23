@@ -686,6 +686,14 @@ def login(payload: AdminLoginRequest, response: Response, request: Request, db: 
             admin.failed_login_attempts += 1
             if admin.failed_login_attempts >= 5:
                 reason = "Cinco tentativas consecutivas de senha sem sucesso."
+                if admin.role == AdminRole.SUPERADMIN:
+                    admin.locked_at = utcnow()
+                    db.add(AuditLog(actor_id="system", event="admin.login_throttled", target_type="admin", target_id=admin.id, metadata_json=json.dumps({"reason": "failed_password_attempts"}, separators=(",", ":"))))
+                    db.commit()
+                    record_attempt(db, payload.email, ip, "admin-login", False, "rate_limited")
+                    text_body, html_body = admin_suspension_email(admin.name, "Várias tentativas de senha sem sucesso foram detectadas.", automatic=True)
+                    _send_email_quietly(admin.email, "Tentativas de acesso bloqueadas temporariamente", text_body, html_body)
+                    raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Muitas tentativas. Aguarde alguns minutos e tente novamente.")
                 _suspend_admin(db, admin, reason=reason, suspended_by="system", automatic=True)
                 db.add(AuditLog(actor_id="system", event="admin.auto_suspended", target_type="admin", target_id=admin.id, metadata_json=json.dumps({"reason": "failed_password_attempts"}, separators=(",", ":"))))
                 db.commit()
@@ -730,8 +738,16 @@ def verify_admin_login_code(payload: AdminLoginCodeRequest, response: Response, 
             admin.failed_login_attempts += 1
             if admin.failed_login_attempts >= 5:
                 reason = "Cinco tentativas consecutivas de senha sem sucesso."
+                if admin.role == AdminRole.SUPERADMIN:
+                    admin.locked_at = utcnow()
+                    db.add(AuditLog(actor_id="system", event="admin.login_throttled", target_type="admin", target_id=admin.id, metadata_json=json.dumps({"reason": "failed_password_attempts"}, separators=(",", ":"))))
+                    db.commit()
+                    record_attempt(db, payload.email, ip, "admin-login-code", False, "rate_limited")
+                    text_body, html_body = admin_suspension_email(admin.name, "Várias tentativas de senha sem sucesso foram detectadas.", automatic=True)
+                    _send_email_quietly(admin.email, "Tentativas de acesso bloqueadas temporariamente", text_body, html_body)
+                    raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Muitas tentativas. Aguarde alguns minutos e tente novamente.")
                 _suspend_admin(db, admin, reason=reason, suspended_by="system", automatic=True)
-                audit(db, admin, "admin.auto_suspended", "admin", admin.id, {"reason": "failed_password_attempts"})
+                db.add(AuditLog(actor_id="system", event="admin.auto_suspended", target_type="admin", target_id=admin.id, metadata_json=json.dumps({"reason": "failed_password_attempts"}, separators=(",", ":"))))
                 db.commit()
                 record_attempt(db, payload.email, ip, "admin-login-code", False, "account_suspended")
                 raise HTTPException(status.HTTP_423_LOCKED, "Conta temporariamente suspensa por segurança. Use Solicitar revisão para pedir a reativação.")
