@@ -17,6 +17,7 @@ from app.integrations.email.service import (
     admin_invitation_email,
     admin_invitation_revoked_email,
     admin_login_code_email,
+    admin_login_throttle_email,
     admin_password_reset_code_email,
     admin_reactivation_alert_email,
     admin_reactivation_request_email,
@@ -691,7 +692,7 @@ def login(payload: AdminLoginRequest, response: Response, request: Request, db: 
                     db.add(AuditLog(actor_id="system", event="admin.login_throttled", target_type="admin", target_id=admin.id, metadata_json=json.dumps({"reason": "failed_password_attempts"}, separators=(",", ":"))))
                     db.commit()
                     record_attempt(db, payload.email, ip, "admin-login", False, "rate_limited")
-                    text_body, html_body = admin_suspension_email(admin.name, "Várias tentativas de senha sem sucesso foram detectadas.", automatic=True)
+                    text_body, html_body = admin_login_throttle_email(admin.name)
                     _send_email_quietly(admin.email, "Tentativas de acesso bloqueadas temporariamente", text_body, html_body)
                     raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Muitas tentativas. Aguarde alguns minutos e tente novamente.")
                 _suspend_admin(db, admin, reason=reason, suspended_by="system", automatic=True)
@@ -743,7 +744,7 @@ def verify_admin_login_code(payload: AdminLoginCodeRequest, response: Response, 
                     db.add(AuditLog(actor_id="system", event="admin.login_throttled", target_type="admin", target_id=admin.id, metadata_json=json.dumps({"reason": "failed_password_attempts"}, separators=(",", ":"))))
                     db.commit()
                     record_attempt(db, payload.email, ip, "admin-login-code", False, "rate_limited")
-                    text_body, html_body = admin_suspension_email(admin.name, "Várias tentativas de senha sem sucesso foram detectadas.", automatic=True)
+                    text_body, html_body = admin_login_throttle_email(admin.name)
                     _send_email_quietly(admin.email, "Tentativas de acesso bloqueadas temporariamente", text_body, html_body)
                     raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Muitas tentativas. Aguarde alguns minutos e tente novamente.")
                 _suspend_admin(db, admin, reason=reason, suspended_by="system", automatic=True)
