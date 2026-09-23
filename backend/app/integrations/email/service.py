@@ -406,3 +406,23 @@ def admin_invitation_revoked_email(name: str) -> tuple[str, str]:
     </body></html>
     """
     return text, html_body
+
+
+def admin_login_throttle_email(name: str) -> tuple[str, str]:
+    text = (
+        "Portal Wi-Fi - Tentativas de acesso bloqueadas\n\n"
+        f"Olá, {name}.\n\n"
+        "Foram detectadas várias tentativas de senha sem sucesso. Novas tentativas foram temporariamente limitadas por segurança.\n"
+        "Aguarde alguns minutos antes de tentar novamente. Se você não reconhece essas tentativas, altere sua senha assim que conseguir entrar."
+    )
+    html_body = f"""
+    <!doctype html><html lang="pt-BR"><body style="margin:0;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#1f2d33;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;"><tr><td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#fff;border:1px solid #dce7e3;border-radius:10px;overflow:hidden;">
+          <tr><td style="background:#7b4b32;color:#fff;padding:22px 24px;"><strong>Portal Wi-Fi</strong><div style="font-size:22px;font-weight:700;margin-top:4px;">Tentativas de acesso bloqueadas</div></td></tr>
+          <tr><td style="padding:26px 24px;"><h1 style="font-size:20px;">Olá, {html.escape(name)}</h1><p>Foram detectadas várias tentativas de senha sem sucesso. Novas tentativas foram temporariamente limitadas por segurança.</p><p style="color:#5f706a;font-size:14px;">Aguarde alguns minutos antes de tentar novamente. Se você não reconhece essas tentativas, altere sua senha assim que conseguir entrar.</p></td></tr>
+        </table>
+      </td></tr></table>
+    </body></html>
+    """
+    return text, html_body
