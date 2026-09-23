@@ -42,11 +42,11 @@ const safeSidebarStorageSet = (value: boolean) => {
 export function AdminSidebar({ admin, active, open, onClose, onSelect }: { admin: AdminMe | null; active: AdminSection; open: boolean; onClose: () => void; onSelect: (section: AdminSection) => void }) {
   const [collapsed, setCollapsed] = useState(safeSidebarStorageGet)
   const groups: Array<{ label: string; items: Array<{ id: AdminSection; label: string; icon: ReactNode }> }> = [
-    { label: 'Visão geral', items: [{ id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard /> }] },
+    { label: 'Visão geral', items: [{ id: 'dashboard', label: 'Visão geral', icon: <LayoutDashboard /> }] },
     { label: 'Acesso', items: [{ id: 'sessions', label: 'Sessões', icon: <MonitorCheck /> }, { id: 'visitors', label: 'Usuários/Visitantes', icon: <UsersRound /> }, { id: 'vouchers', label: 'Vouchers', icon: <Ticket /> }] },
-    { label: 'Infraestrutura', items: [{ id: 'sites', label: 'Sites', icon: <MapPinned /> }, { id: 'access-points', label: 'Access Points', icon: <Radio /> }] },
+    { label: 'Rede', items: [{ id: 'sites', label: 'Unidades', icon: <MapPinned /> }, { id: 'access-points', label: 'Pontos de acesso', icon: <Radio /> }] },
     { label: 'Comunicação', items: [{ id: 'portal-sites', label: 'Portais por unidade', icon: <MapPinned /> }, { id: 'portal', label: 'Portal público', icon: <Palette /> }, { id: 'notices', label: 'Avisos', icon: <Megaphone /> }, { id: 'maintenance', label: 'Manutenção', icon: <Clock /> }] },
-    { label: 'Administração', items: [{ id: 'admins', label: 'Administradores', icon: <UserCog /> }, { id: 'audit', label: 'Auditoria', icon: <History /> }, { id: 'health', label: 'Saúde', icon: <Activity /> }, { id: 'settings', label: 'Minha conta', icon: <Settings /> }] },
+    { label: 'Administração', items: [{ id: 'admins', label: 'Administradores', icon: <UserCog /> }, { id: 'audit', label: 'Auditoria', icon: <History /> }, { id: 'health', label: 'Status do sistema', icon: <Activity /> }, { id: 'settings', label: 'Minha conta', icon: <Settings /> }] },
   ]
   const role = admin?.role || 'VIEWER'
   const hiddenForRole = (section: AdminSection) => {
@@ -62,7 +62,7 @@ export function AdminSidebar({ admin, active, open, onClose, onSelect }: { admin
   return (
     <>
       <aside className={`admin-sidebar ${open ? 'open' : ''} ${collapsed ? 'collapsed' : ''}`} aria-label="Navegação administrativa">
-        <div className="sidebar-brand"><div className="brand-mark"><Wifi /></div><div><strong>Captive Portal</strong><span>Operação Wi-Fi</span></div></div>
+        <div className="sidebar-brand"><div className="brand-mark"><Wifi /></div><div><strong>Portal Wi-Fi</strong><span>Operação de acesso</span></div></div>
         <button className="sidebar-close" type="button" aria-label="Fechar menu" onClick={onClose}><X /></button>
         <button className="collapse-button" type="button" aria-label={collapsed ? 'Expandir menu' : 'Recolher menu'} onClick={toggleCollapsed}>{collapsed ? '>' : '<'}</button>
         <nav className="sidebar-nav">
@@ -80,13 +80,13 @@ export function AdminHeader({ admin, maintenance, refreshing, lastUpdatedAt, ref
   return (
     <header className="admin-topbar">
       <button className="mobile-menu" type="button" onClick={onMenu} aria-label="Abrir menu administrativo"><Menu /></button>
-      <div className="admin-title"><h1>Painel do Portal</h1><p>Visão geral da infraestrutura e dos acessos</p></div>
+      <div className="admin-title"><h1>Painel do Portal</h1><p>Visão geral das unidades e dos acessos</p></div>
       <div className="admin-actions">
         <label className="site-selector" htmlFor="admin-site-selector">
           <MapPinned aria-hidden="true" />
           <span>Unidade</span>
           <select id="admin-site-selector" value={selectedSiteId} onChange={(event) => onSiteChange(event.target.value)} aria-label="Selecionar unidade operacional">
-            {canUseAll ? <option value="ALL">Todos os sites</option> : null}
+            {canUseAll ? <option value="ALL">Todas as unidades</option> : null}
             {allowedSites.map((site) => <option key={site.siteId} value={site.siteId}>{site.name}</option>)}
           </select>
         </label>
@@ -100,7 +100,7 @@ export function AdminHeader({ admin, maintenance, refreshing, lastUpdatedAt, ref
   )
 }
 export function PageHeader({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
-  return <header className="page-header"><div><span>Admin</span><h2>{title}</h2><p>{description}</p></div>{action ? <div className="page-actions">{action}</div> : null}</header>
+  return <header className="page-header"><div><span>Painel</span><h2>{title}</h2><p>{description}</p></div>{action ? <div className="page-actions">{action}</div> : null}</header>
 }
 
 export function MaintenanceSummary({ maintenance }: { maintenance: MaintenanceAdmin }) {
