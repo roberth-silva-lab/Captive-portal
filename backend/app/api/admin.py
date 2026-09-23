@@ -15,6 +15,7 @@ from app.integrations.email.service import (
     EmailDeliveryError,
     admin_access_change_email,
     admin_invitation_email,
+    admin_invitation_revoked_email,
     admin_login_code_email,
     admin_password_reset_code_email,
     admin_reactivation_alert_email,
@@ -1608,6 +1609,8 @@ def revoke_admin_invitation(invite_id: str, db: Session = Depends(get_db), admin
         audit(db, admin, "admin_invitation.revoked", "admin_invitation", invite.id, {"email": invite.email, "role": invite.role})
         db.commit()
         db.refresh(invite)
+        text_body, html_body = admin_invitation_revoked_email(invite.name)
+        _send_email_quietly(invite.email, "Convite administrativo cancelado", text_body, html_body)
     return _invite_out(invite, _invite_delivery_status(invite))
 
 
