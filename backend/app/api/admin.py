@@ -1014,10 +1014,14 @@ def update_voucher(voucher_id: str, payload: VoucherUpdateRequest, db: Session =
     voucher.description = payload.description
     voucher.duration_minutes = payload.durationMinutes
     voucher.unlimited_duration = payload.unlimitedDuration
-    voucher.time_limit_minutes = payload.timeLimitMinutes
-    voucher.data_limit_mb = payload.dataLimitMb
-    voucher.download_limit = payload.downloadLimit
-    voucher.upload_limit = payload.uploadLimit
+    if "timeLimitMinutes" in payload.model_fields_set:
+        voucher.time_limit_minutes = payload.timeLimitMinutes
+    if "dataLimitMb" in payload.model_fields_set:
+        voucher.data_limit_mb = payload.dataLimitMb
+    if "downloadLimit" in payload.model_fields_set:
+        voucher.download_limit = payload.downloadLimit
+    if "uploadLimit" in payload.model_fields_set:
+        voucher.upload_limit = payload.uploadLimit
     voucher.device_limit = payload.deviceLimit
     voucher.max_devices = payload.maxDevices or payload.deviceLimit
     voucher.site = site_name
