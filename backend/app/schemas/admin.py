@@ -218,7 +218,9 @@ class SiteNode(BaseModel):
 class VoucherCreateRequest(BaseModel):
     description: str = Field(default="", max_length=240)
     quantity: int = Field(default=1, gt=0, le=500)
-    durationMinutes: int = Field(gt=0, le=10080)
+    durationMinutes: int = Field(default=120, gt=0, le=10080)
+    unlimitedDuration: bool = False
+    deliveryEmail: EmailStr | None = None
     timeLimitMinutes: int | None = Field(default=None, gt=0, le=10080)
     dataLimitMb: int | None = Field(default=None, gt=0)
     downloadLimit: int | None = Field(default=None, gt=0)
@@ -239,7 +241,8 @@ class VoucherCreateRequest(BaseModel):
 
 class VoucherUpdateRequest(BaseModel):
     description: str = Field(default="", max_length=240)
-    durationMinutes: int = Field(gt=0, le=10080)
+    durationMinutes: int = Field(default=120, gt=0, le=10080)
+    unlimitedDuration: bool = False
     timeLimitMinutes: int | None = Field(default=None, gt=0, le=10080)
     dataLimitMb: int | None = Field(default=None, gt=0)
     downloadLimit: int | None = Field(default=None, gt=0)
@@ -264,6 +267,7 @@ class VoucherResponse(BaseModel):
     description: str = ""
     status: str
     durationMinutes: int
+    unlimitedDuration: bool = False
     timeLimitMinutes: int | None = None
     dataLimitMb: int | None = None
     downloadLimit: int | None = None
@@ -287,12 +291,15 @@ class CreatedVoucherCode(BaseModel):
     codeLabel: str
     site: str
     durationMinutes: int
+    unlimitedDuration: bool = False
     expiresAt: datetime | None = None
 
 
 class VoucherBatchCreateResponse(BaseModel):
     created: int
     vouchers: list[CreatedVoucherCode]
+    emailDeliveryStatus: str = "not_requested"
+    emailSentTo: EmailStr | None = None
 
 
 class PortalAppearanceRequest(BaseModel):
