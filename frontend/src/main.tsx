@@ -355,6 +355,8 @@ function Portal() {
         serverNow: new Date().toISOString(),
         remainingSeconds: result.remainingSeconds,
         remainingMinutes: Math.max(0, Math.floor(result.remainingSeconds / 60)),
+        sessionMinutes: result.sessionMinutes,
+        unlimited: Boolean(result.unlimited),
         totalSeconds: result.totalSeconds,
         ssid: params.ssid || networkName,
         nextCheckSeconds: result.nextCheckSeconds ?? 30,
