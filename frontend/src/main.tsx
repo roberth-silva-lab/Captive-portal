@@ -601,6 +601,7 @@ function Admin() {
       sites: 30000,
       'site-detail': 30000,
       'access-points': 30000,
+      admins: 30000,
     }
     const intervalMs = pollingBySection[activeSection]
     if (!intervalMs) return undefined
@@ -610,7 +611,7 @@ function Admin() {
     }
     const handle = window.setInterval(tick, intervalMs)
     const onVisibility = () => {
-      if (!document.hidden && ['dashboard', 'sessions', 'visitors'].includes(activeSection)) tick()
+      if (!document.hidden && ['dashboard', 'sessions', 'visitors', 'admins'].includes(activeSection)) tick()
     }
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
