@@ -464,6 +464,7 @@ def _client_portal_session(db: Session, client_mac: str) -> dict[str, Any]:
         "authorizedAt": session.authorized_at,
         "expiresAt": session.expires_at,
         "remainingSeconds": seconds_remaining(session),
+        "unlimited": bool(session.unlimited_access),
         "canEndAccess": bool(session.site and session.unifi_client_id and session.status == SessionStatus.AUTHORIZED),
     }
 
@@ -701,7 +702,7 @@ def me(admin: AdminUser = Depends(current_admin), db: Session = Depends(get_db))
 
 
 @router.get("/system-health")
-async def system_health(_admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+async def system_health(_admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
     settings = get_settings()
     database_status = "ok"
     schema_status = "ok"
@@ -1209,7 +1210,7 @@ def update_maintenance(payload: MaintenanceUpdateRequest, siteId: str | None = N
 
 
 @router.get("/audit")
-def audit_log(siteId: str | None = None, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+def audit_log(siteId: str | None = None, db: Session = Depends(get_db), admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
     selected_sites = visible_site_filter(db, admin, siteId)
     rows = db.scalars(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(200)).all()
     visible = []
@@ -1224,13 +1225,13 @@ def audit_log(siteId: str | None = None, db: Session = Depends(get_db), admin: A
 
 
 @router.get("/auth-attempts", response_model=list[AuthAttemptResponse])
-def auth_attempts(limit: int = Query(default=120, ge=1, le=300), db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+def auth_attempts(limit: int = Query(default=120, ge=1, le=300), db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
     rows = db.scalars(select(AuthAttempt).order_by(AuthAttempt.created_at.desc()).limit(limit)).all()
     return [AuthAttemptResponse(id=row.id, method=row.method, success=row.success, reason=row.reason, createdAt=row.created_at) for row in rows]
 
 
 @router.get("/maintenance/audit")
-def maintenance_audit(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.VIEWER))):
+def maintenance_audit(db: Session = Depends(get_db), _admin: AdminUser = Depends(require_role(AdminRole.ADMIN))):
     rows = db.scalars(select(AuditLog).where(AuditLog.target_type == "maintenance").order_by(AuditLog.created_at.desc()).limit(50)).all()
     return [_audit_out(row) for row in rows]
 
@@ -1321,11 +1322,11 @@ def list_sessions(siteId: str | None = None, q: str | None = None, status_filter
         current_status = session.status.value.lower()
         remaining = seconds_remaining(session)
         if status_filter and status_filter != "all":
-            if status_filter == "online" and not (session.status == SessionStatus.AUTHORIZED and remaining > 0):
+            if status_filter == "online" and not (session.status == SessionStatus.AUTHORIZED and (session.unlimited_access or remaining > 0)):
                 continue
-            if status_filter == "expiring-30" and not (session.status == SessionStatus.AUTHORIZED and 0 < remaining <= 1800):
+            if status_filter == "expiring-30" and not (session.status == SessionStatus.AUTHORIZED and not session.unlimited_access and 0 < remaining <= 1800):
                 continue
-            if status_filter == "expiring-10" and not (session.status == SessionStatus.AUTHORIZED and 0 < remaining <= 600):
+            if status_filter == "expiring-10" and not (session.status == SessionStatus.AUTHORIZED and not session.unlimited_access and 0 < remaining <= 600):
                 continue
             if status_filter == "ended" and current_status != "disconnected":
                 continue
@@ -1354,10 +1355,11 @@ def list_sessions(siteId: str | None = None, q: str | None = None, status_filter
                 "reauthRequiredAt": session.reauth_required_at,
                 "reauthReason": session.reauth_reason,
                 "remainingSeconds": remaining,
+                "unlimited": bool(session.unlimited_access),
                 "durationSeconds": session.duration_seconds,
                 "canEndAccess": bool(session.site and session.status == SessionStatus.AUTHORIZED),
                 "canRequireReauth": bool(session.site and session.status == SessionStatus.AUTHORIZED),
-                "canExtend": bool(session.site and session.status == SessionStatus.AUTHORIZED and remaining > 0),
+                "canExtend": bool(session.site and session.status == SessionStatus.AUTHORIZED and not session.unlimited_access and remaining > 0),
                 "canReauthorize": bool(session.site and session.status != SessionStatus.AUTHORIZED),
                 "canBlock": bool(session.site and session.client_mac),
             }
