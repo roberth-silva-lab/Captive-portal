@@ -30,8 +30,9 @@ export type ClientRow = Record<string, unknown>
 export type AccessPoint = Record<string, unknown>
 export type SensitiveSessionReveal = { sessionId: string; name: string; email: string; cpf: string; phone: string; revealedAt: string }
 export type GuestSessionRow = { id: string; name?: string; clientMac: string; apMac?: string; ssid?: string; site?: string; method: string; status: string; createdAt: string; authorizedAt?: string | null; expiresAt?: string | null; disconnectedAt?: string | null; endedAt?: string | null; endedBy?: string; adminEndReason?: string; reauthRequiredAt?: string | null; reauthReason?: string; remainingSeconds: number; unlimited?: boolean; durationSeconds: number; canEndAccess: boolean; canRequireReauth?: boolean; canExtend?: boolean; canReauthorize?: boolean; canBlock?: boolean }
-export type AdminUserRow = { id: string; name: string; email: string; role: string; status: string; mfa: string; siteIds?: string[]; canSelectAllSites?: boolean; createdAt: string; lastLogin?: string | null }
+export type AdminUserRow = { id: string; name: string; email: string; role: string; status: string; mfa: string; siteIds?: string[]; canSelectAllSites?: boolean; createdAt: string; lastLogin?: string | null; lastSeenAt?: string | null; online?: boolean; failedLoginAttempts?: number; suspendedAt?: string | null; suspendedReason?: string }
 export type SessionOperationResponse = { status: string; unifiConfirmed: boolean; message: string; sessionId: string; operationState: string; blockId?: string | null; newSessionId?: string | null; expiresAt?: string | null }
+export type AdminReactivationRequestRow = { id: string; adminId: string; adminName: string; adminEmail: string; message: string; status: string; requestedAt: string; reviewedAt?: string | null; reviewedBy?: string; resolutionNote?: string }
 
 export type Method = 'voucher' | 'cpf' | 'email'
 export type Stage = 'idle' | 'validating' | 'authorizing' | 'confirming' | 'checking' | 'released' | 'error'
