@@ -1,6 +1,6 @@
 import hashlib
 import hmac
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import Cookie, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -40,6 +40,14 @@ def current_admin(
     admin = db.get(AdminUser, session.admin_id)
     if not admin or not admin.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Administrador inativo.")
+    if session.last_seen_at.tzinfo is None:
+        compare_now = now.replace(tzinfo=None)
+    else:
+        compare_now = now
+    if session.last_seen_at <= compare_now - timedelta(seconds=60):
+        session.last_seen_at = compare_now
+        admin.last_seen_at = compare_now
+        db.commit()
     return admin
 
 
