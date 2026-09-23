@@ -1567,11 +1567,35 @@ function SettingsPanel({ admin, maintenance, appearance, allowedSites, selectedS
     </div>
   )
 }
-function MaintenanceAdminPanel({ maintenance, allowedSites, selectedSiteId, saving, feedback, onChange, onSave }: { maintenance: MaintenanceAdmin; allowedSites: AllowedSite[]; selectedSiteId: string; saving: boolean; feedback: string; onChange: (value: MaintenanceAdmin) => void; onSave: () => void }) {
+function MaintenanceAdminPanel({
+  maintenance,
+  allowedSites,
+  selectedSiteId,
+  canManage,
+  saving,
+  feedback,
+  onChange,
+  onSave,
+}: {
+  maintenance: MaintenanceAdmin
+  allowedSites: AllowedSite[]
+  selectedSiteId: string
+  canManage: boolean
+  saving: boolean
+  feedback: string
+  onChange: (value: MaintenanceAdmin) => void
+  onSave: () => void
+}) {
   const [uploadingImage, setUploadingImage] = useState(false)
   const [uploadMessage, setUploadMessage] = useState('')
   const selectedSite = allowedSites.find((site) => site.siteId === selectedSiteId)
   const scopeLabel = selectedSiteId === 'ALL' ? 'todos os sites' : selectedSite?.name || selectedSiteId
+  const startAt = maintenance.maintenanceStartAt ? new Date(maintenance.maintenanceStartAt).getTime() : null
+  const mode: 'off' | 'now' | 'scheduled' = !maintenance.maintenanceEnabled
+    ? 'off'
+    : startAt !== null && startAt > Date.now() + 30_000
+      ? 'scheduled'
+      : 'now'
   const maintenanceStatus = maintenance.maintenanceStatus ?? (maintenance.maintenanceActive ? 'active' : maintenance.maintenanceScheduled ? 'scheduled' : maintenance.maintenanceExpired ? 'expired' : 'disabled')
   const statusTitle = maintenanceStatus === 'active'
     ? 'Portal em manutenção agora'
@@ -1581,56 +1605,162 @@ function MaintenanceAdminPanel({ maintenance, allowedSites, selectedSiteId, savi
         ? 'Janela encerrada'
         : 'Portal funcionando normalmente'
   const statusDetail = maintenanceStatus === 'active'
-    ? (maintenance.maintenanceEndAt ? `Término previsto: ${formatClock(maintenance.maintenanceEndAt)}` : 'Ativa até ser desabilitada.')
+    ? (maintenance.maintenanceEndAt ? `Término previsto: ${formatClock(maintenance.maintenanceEndAt)}` : 'Permanece ativa até um administrador desabilitar.')
     : maintenanceStatus === 'scheduled'
       ? `Início programado: ${formatClock(maintenance.maintenanceStartAt)}`
       : maintenanceStatus === 'expired'
-        ? 'A janela terminou. Desative ou programe uma nova manutenção.'
-        : 'A manutenção pode ser imediata ou programada com início e término.'
-  const setQuickWindow = (minutes: number) => {
-    const start = new Date()
-    const end = new Date(start.getTime() + minutes * 60_000)
-    onChange({ ...maintenance, maintenanceEnabled: true, maintenanceStartAt: start.toISOString(), maintenanceEndAt: end.toISOString(), maintenanceExpired: false, maintenanceStatus: 'active' })
+        ? 'A janela terminou. Escolha uma nova programação ou deixe o portal operacional.'
+        : 'Nenhum visitante está vendo a tela de manutenção.'
+
+  const setMode = (next: 'off' | 'now' | 'scheduled') => {
+    if (!canManage) return
+    if (next === 'off') {
+      onChange({ ...maintenance, maintenanceEnabled: false, maintenanceStatus: 'disabled' })
+      return
+    }
+    if (next === 'now') {
+      onChange({
+        ...maintenance,
+        maintenanceEnabled: true,
+        maintenanceStartAt: new Date().toISOString(),
+        maintenanceEndAt: null,
+        maintenanceExpired: false,
+        maintenanceStatus: 'active',
+      })
+      return
+    }
+    const start = new Date(Date.now() + 30 * 60_000)
+    const end = new Date(start.getTime() + 60 * 60_000)
+    onChange({
+      ...maintenance,
+      maintenanceEnabled: true,
+      maintenanceStartAt: start.toISOString(),
+      maintenanceEndAt: end.toISOString(),
+      maintenanceExpired: false,
+      maintenanceStatus: 'scheduled',
+    })
   }
+
+  const setQuickWindow = (minutes: number | null) => {
+    if (!canManage) return
+    const start = new Date()
+    const end = minutes === null ? null : new Date(start.getTime() + minutes * 60_000)
+    onChange({
+      ...maintenance,
+      maintenanceEnabled: true,
+      maintenanceStartAt: start.toISOString(),
+      maintenanceEndAt: end?.toISOString() ?? null,
+      maintenanceExpired: false,
+      maintenanceStatus: 'active',
+    })
+  }
+
   const uploadMaintenanceImage = async (file: File | undefined) => {
-    if (!file) return
+    if (!file || !canManage) return
     setUploadingImage(true)
     setUploadMessage('')
     try {
       const media = await uploadImageAsset(file, 'maintenance')
       onChange({ ...maintenance, maintenanceImageUrl: media.publicUrl })
-      setUploadMessage('Imagem carregada no preview. Clique em Salvar alterações para publicar.')
+      setUploadMessage('Imagem pronta no preview. Salve para publicar.')
     } catch (err) {
       setUploadMessage(err instanceof Error ? err.message : 'Não foi possível enviar a imagem.')
     } finally {
       setUploadingImage(false)
     }
   }
+
   return (
     <div className="admin-content">
-      <section className="maintenance-editor" aria-labelledby="maintenance-title">
-        <div className={`maintenance-status-card ${maintenanceStatus === 'active' ? 'active' : ''}`}>
-          <div><span>Status do portal</span><strong>{statusTitle}</strong><p>{statusDetail}</p>{maintenance.maintenanceInherited ? <small>Esta unidade está herdando a manutenção global. Ao salvar, será criado um ajuste próprio para {scopeLabel}.</small> : null}</div>
-          <label className="switch" htmlFor="maintenance-enabled"><input id="maintenance-enabled" type="checkbox" checked={maintenance.maintenanceEnabled} onChange={(event) => onChange({ ...maintenance, maintenanceEnabled: event.target.checked, maintenanceStatus: event.target.checked ? maintenance.maintenanceStatus : 'disabled' })} /><span aria-hidden="true" /></label>
+      <section className="maintenance-editor refined" aria-labelledby="maintenance-title">
+        {!canManage ? <div className="readonly-banner"><span>VIEWER</span><strong>Modo somente leitura</strong><p>Você pode consultar a programação e o preview, mas não pode publicar alterações.</p></div> : null}
+        <div className={`maintenance-status-card ${maintenanceStatus === 'active' ? 'active' : maintenanceStatus === 'scheduled' ? 'scheduled' : ''}`}>
+          <div>
+            <span>Status do portal · {scopeLabel}</span>
+            <strong>{statusTitle}</strong>
+            <p>{statusDetail}</p>
+            {maintenance.maintenanceInherited ? <small>Esta unidade está herdando a configuração global. Um ADMIN pode salvar uma configuração própria para {scopeLabel}.</small> : null}
+          </div>
+          <span className={`maintenance-state-dot ${maintenanceStatus}`} aria-hidden="true" />
         </div>
-        <div className="maintenance-grid">
-          <div className="panel-form">
-            <div className="section-heading"><h2 id="maintenance-title">Manutenção</h2><p>Controle a tela que aparece para visitantes de {scopeLabel}. O visitante nunca vê erro técnico.</p></div>
-            <label htmlFor="maintenance-field-title">Título<input id="maintenance-field-title" value={maintenance.maintenanceTitle} onChange={(event) => onChange({ ...maintenance, maintenanceTitle: event.target.value })} /></label>
-            <label htmlFor="maintenance-field-message">Mensagem<textarea id="maintenance-field-message" value={maintenance.maintenanceMessage} onChange={(event) => onChange({ ...maintenance, maintenanceMessage: event.target.value })} rows={5} /></label>
-            <div className="date-grid"><label htmlFor="maintenance-start">Início<input id="maintenance-start" type="datetime-local" value={datetimeLocal(maintenance.maintenanceStartAt)} onChange={(event) => onChange({ ...maintenance, maintenanceStartAt: fromDatetimeLocal(event.target.value) })} /></label><label htmlFor="maintenance-end">Término<input id="maintenance-end" type="datetime-local" value={datetimeLocal(maintenance.maintenanceEndAt)} onChange={(event) => onChange({ ...maintenance, maintenanceEndAt: fromDatetimeLocal(event.target.value) })} /></label></div>
-            <div className="media-inline-control compact"><button className="soft-button" type="button" onClick={() => setQuickWindow(30)}>Agora · 30 min</button><button className="soft-button" type="button" onClick={() => setQuickWindow(60)}>Agora · 1 h</button><button className="soft-button" type="button" onClick={() => onChange({ ...maintenance, maintenanceStartAt: null, maintenanceEndAt: null, maintenanceExpired: false })}>Limpar agenda</button></div>
-            <div className="maintenance-image-picker"><div><strong>Imagem da manutenção</strong><span>Use uma imagem institucional, como o leão, brasão ou aviso visual. PNG, JPG ou WebP.</span></div><label className="maintenance-upload-card" htmlFor="maintenance-image-upload">{maintenance.maintenanceImageUrl ? <img src={maintenance.maintenanceImageUrl} alt="Preview da imagem de manutenção" /> : <span><Clock />Selecionar imagem</span>}</label><input id="maintenance-image-upload" className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void uploadMaintenanceImage(event.target.files?.[0])} disabled={uploadingImage} /><div className="media-inline-control compact"><label className="soft-button" htmlFor="maintenance-image-upload">{uploadingImage ? 'Enviando...' : maintenance.maintenanceImageUrl ? 'Trocar imagem' : 'Selecionar imagem'}</label>{maintenance.maintenanceImageUrl ? <button className="soft-button" type="button" onClick={() => onChange({ ...maintenance, maintenanceImageUrl: '' })}>Remover imagem</button> : null}</div><label className="maintenance-url-field" htmlFor="maintenance-image">URL da imagem<input id="maintenance-image" value={maintenance.maintenanceImageUrl} onChange={(event) => onChange({ ...maintenance, maintenanceImageUrl: event.target.value })} placeholder="/media/..." /></label>{uploadMessage ? <p className={uploadMessage.includes('Não') ? 'error' : 'panel-note'} role="status">{uploadMessage}</p> : null}</div>
-            <button className="primary admin-save" type="button" onClick={onSave} disabled={saving}>{saving ? 'Salvando...' : 'Salvar alterações'}</button>
+
+        <div className="maintenance-mode-card">
+          <div className="section-heading"><h2 id="maintenance-title">Como deseja operar?</h2><p>Escolha um modo. Datas e opções aparecem apenas quando forem necessárias.</p></div>
+          <div className="maintenance-mode-grid" role="group" aria-label="Modo da manutenção">
+            <button className={mode === 'off' ? 'maintenance-mode active' : 'maintenance-mode'} type="button" onClick={() => setMode('off')} disabled={!canManage}>
+              <strong>Desativada</strong><span>Portal funcionando normalmente.</span>
+            </button>
+            <button className={mode === 'now' ? 'maintenance-mode active' : 'maintenance-mode'} type="button" onClick={() => setMode('now')} disabled={!canManage}>
+              <strong>Ativar agora</strong><span>Mostra a manutenção imediatamente.</span>
+            </button>
+            <button className={mode === 'scheduled' ? 'maintenance-mode active' : 'maintenance-mode'} type="button" onClick={() => setMode('scheduled')} disabled={!canManage}>
+              <strong>Agendar</strong><span>Define início e término futuros.</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="maintenance-grid refined-grid">
+          <div className="panel-form maintenance-form">
+            {mode === 'now' ? <section className="maintenance-window-card">
+              <strong>Duração desta manutenção</strong>
+              <span>Escolha um período rápido ou mantenha ativa até desabilitar manualmente.</span>
+              <div className="duration-choice-grid maintenance-quick-grid">
+                <button className="duration-choice" type="button" onClick={() => setQuickWindow(30)} disabled={!canManage}>30 min</button>
+                <button className="duration-choice" type="button" onClick={() => setQuickWindow(60)} disabled={!canManage}>1 h</button>
+                <button className="duration-choice" type="button" onClick={() => setQuickWindow(120)} disabled={!canManage}>2 h</button>
+                <button className={maintenance.maintenanceEndAt ? 'duration-choice' : 'duration-choice active'} type="button" onClick={() => setQuickWindow(null)} disabled={!canManage}>Até eu desativar</button>
+              </div>
+              {maintenance.maintenanceEndAt ? <small>Término atual: {formatClock(maintenance.maintenanceEndAt)}</small> : <small>Sem término automático.</small>}
+            </section> : null}
+
+            {mode === 'scheduled' ? <section className="maintenance-window-card">
+              <strong>Janela programada</strong>
+              <span>O portal entra e sai da manutenção automaticamente nas datas abaixo.</span>
+              <div className="date-grid">
+                <label htmlFor="maintenance-start">Início<input id="maintenance-start" type="datetime-local" value={datetimeLocal(maintenance.maintenanceStartAt)} onChange={(event) => onChange({ ...maintenance, maintenanceStartAt: fromDatetimeLocal(event.target.value) })} disabled={!canManage} /></label>
+                <label htmlFor="maintenance-end">Término<input id="maintenance-end" type="datetime-local" value={datetimeLocal(maintenance.maintenanceEndAt)} onChange={(event) => onChange({ ...maintenance, maintenanceEndAt: fromDatetimeLocal(event.target.value) })} disabled={!canManage} /></label>
+              </div>
+            </section> : null}
+
+            <section className="form-section maintenance-copy-card">
+              <div className="form-section-head"><span>1</span><div><strong>Mensagem para o visitante</strong><small>Use um texto simples, sem detalhes técnicos.</small></div></div>
+              <label htmlFor="maintenance-field-title">Título<input id="maintenance-field-title" value={maintenance.maintenanceTitle} onChange={(event) => onChange({ ...maintenance, maintenanceTitle: event.target.value })} disabled={!canManage} /></label>
+              <label htmlFor="maintenance-field-message">Mensagem<textarea id="maintenance-field-message" value={maintenance.maintenanceMessage} onChange={(event) => onChange({ ...maintenance, maintenanceMessage: event.target.value })} rows={4} disabled={!canManage} /></label>
+            </section>
+
+            <section className="form-section maintenance-media-card">
+              <div className="form-section-head"><span>2</span><div><strong>Imagem</strong><small>Opcional. PNG, JPG ou WebP.</small></div></div>
+              <div className="maintenance-media-row">
+                <label className={`maintenance-upload-card compact ${!canManage ? 'disabled' : ''}`} htmlFor="maintenance-image-upload">
+                  {maintenance.maintenanceImageUrl ? <img src={maintenance.maintenanceImageUrl} alt="Preview da imagem de manutenção" /> : <span><Clock />Selecionar imagem</span>}
+                </label>
+                <div className="maintenance-media-actions">
+                  {canManage ? <><label className="soft-button" htmlFor="maintenance-image-upload">{uploadingImage ? 'Enviando...' : maintenance.maintenanceImageUrl ? 'Trocar imagem' : 'Selecionar imagem'}</label><input id="maintenance-image-upload" className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void uploadMaintenanceImage(event.target.files?.[0])} disabled={uploadingImage} />{maintenance.maintenanceImageUrl ? <button className="soft-button" type="button" onClick={() => onChange({ ...maintenance, maintenanceImageUrl: '' })}>Remover</button> : null}</> : <span className="panel-note">Imagem em modo somente leitura.</span>}
+                </div>
+              </div>
+              {canManage ? <details className="advanced-details"><summary>Avançado: URL da imagem</summary><label htmlFor="maintenance-image">URL<input id="maintenance-image" value={maintenance.maintenanceImageUrl} onChange={(event) => onChange({ ...maintenance, maintenanceImageUrl: event.target.value })} placeholder="/media/..." /></label></details> : null}
+              {uploadMessage ? <p className={uploadMessage.includes('Não') ? 'error' : 'panel-note'} role="status">{uploadMessage}</p> : null}
+            </section>
+
+            {canManage ? <button className="primary admin-save" type="button" onClick={onSave} disabled={saving}>{saving ? 'Publicando...' : 'Salvar e publicar'}</button> : null}
             {feedback ? <p className={feedback.includes('sucesso') ? 'success' : 'error'} role="status">{feedback}</p> : null}
           </div>
-          <aside className="maintenance-preview enhanced"><span>Preview público</span>{maintenance.maintenanceImageUrl ? <img src={maintenance.maintenanceImageUrl} alt="" /> : <Clock className="hero-icon" />}<strong>{maintenance.maintenanceTitle}</strong><p>{maintenance.maintenanceMessage}</p><small>{maintenance.maintenanceStartAt ? `Início: ${formatClock(maintenance.maintenanceStartAt)}` : 'Sem início programado.'}</small><small>{maintenance.maintenanceEndAt ? `Término: ${formatClock(maintenance.maintenanceEndAt)}` : 'Sem término definido.'}</small></aside>
+
+          <aside className="maintenance-preview enhanced refined-preview">
+            <span>Preview público</span>
+            {maintenance.maintenanceImageUrl ? <img src={maintenance.maintenanceImageUrl} alt="" /> : <Clock className="hero-icon" />}
+            <strong>{maintenance.maintenanceTitle}</strong>
+            <p>{maintenance.maintenanceMessage}</p>
+            <div className="maintenance-preview-meta">
+              <small>{mode === 'off' ? 'Portal operacional' : mode === 'scheduled' ? `Início: ${formatClock(maintenance.maintenanceStartAt)}` : 'Início: assim que publicar'}</small>
+              <small>{mode === 'off' ? 'A tela de manutenção não será exibida.' : maintenance.maintenanceEndAt ? `Término: ${formatClock(maintenance.maintenanceEndAt)}` : 'Término: até desativação manual'}</small>
+            </div>
+          </aside>
         </div>
       </section>
     </div>
   )
 }
-
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms))
 
