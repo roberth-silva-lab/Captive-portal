@@ -28,10 +28,12 @@ def test_postgresql_migrations_reach_head_and_match_required_columns(monkeypatch
             inspector = inspect(conn)
             admin_columns = {column["name"] for column in inspector.get_columns("admin_users")}
             voucher_columns = {column["name"] for column in inspector.get_columns("vouchers")}
+            session_columns = {column["name"] for column in inspector.get_columns("guest_sessions")}
     finally:
         engine.dispose()
 
-    assert current == "20260730_0003"
+    assert current == "20260923_0007"
     assert {"id", "email", "name", "password_hash", "role", "is_active", "created_at", "updated_at"}.issubset(admin_columns)
-    assert {"description", "created_by", "revoked_at", "revoked_by", "site_id", "site_name_snapshot"}.issubset(voucher_columns)
+    assert {"description", "created_by", "revoked_at", "revoked_by", "site_id", "site_name_snapshot", "unlimited_duration"}.issubset(voucher_columns)
+    assert {"unlimited_access", "unifi_refresh_at"}.issubset(session_columns)
     assert {"description", "created_by", "revoked_at", "revoked_by"}.isdisjoint(admin_columns)
