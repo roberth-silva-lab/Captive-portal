@@ -59,7 +59,7 @@ cd ..
 
 ## 3. Atualizações com migração
 
-Quando uma atualização incluir uma nova revisão Alembic, atualize o código e aplique a migração **antes** de reiniciar a API. A revisão `20260923_0007` adiciona suporte a vouchers sem limite e ao controle de renovação da autorização UniFi.
+Quando uma atualização incluir uma nova revisão Alembic, atualize o código e aplique a migração **antes** de reiniciar a API. A revisão `20260923_0008` inclui os ajustes mais recentes de vouchers sem limite, renovação de acesso e controles de contas administrativas.
 
 ```powershell
 cd C:\Users\RFB_OCR\Captive-portal
