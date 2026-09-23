@@ -255,3 +255,134 @@ def admin_password_reset_code_email(code: str, ttl_minutes: int) -> tuple[str, s
     </html>
     """
     return text, html_body
+
+
+def admin_access_change_email(name: str, old_role: str, new_role: str) -> tuple[str, str]:
+    role_labels = {"ADMIN": "Administrador", "VIEWER": "Visualização", "SUPERADMIN": "Administrador global"}
+    old_label = role_labels.get(old_role, old_role)
+    new_label = role_labels.get(new_role, new_role)
+    if old_role == "VIEWER" and new_role == "ADMIN":
+        summary = "Seu acesso foi ampliado e agora permite administrar os recursos das unidades autorizadas."
+    elif old_role == "ADMIN" and new_role == "VIEWER":
+        summary = "Seu acesso foi ajustado para modo de visualização. As permissões de edição foram removidas."
+    else:
+        summary = "Seu perfil de acesso ao painel foi atualizado."
+    text = (
+        "Portal Wi-Fi - Atualização de acesso\n\n"
+        f"Olá, {name}.\n\n"
+        f"{summary}\n"
+        f"Perfil anterior: {old_label}\n"
+        f"Novo perfil: {new_label}\n\n"
+        "Se precisar revisar essa alteração, entre em contato pelo fluxo de suporte do painel."
+    )
+    html_body = f"""
+    <!doctype html><html lang="pt-BR"><body style="margin:0;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#1f2d33;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;"><tr><td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#fff;border:1px solid #dce7e3;border-radius:10px;overflow:hidden;">
+          <tr><td style="background:#125f78;color:#fff;padding:22px 24px;"><strong>Portal Wi-Fi</strong><div style="font-size:22px;font-weight:700;margin-top:4px;">Atualização de acesso</div></td></tr>
+          <tr><td style="padding:26px 24px;"><h1 style="font-size:20px;">Olá, {html.escape(name)}</h1><p>{html.escape(summary)}</p>
+            <p><strong>Perfil anterior:</strong> {html.escape(old_label)}<br><strong>Novo perfil:</strong> {html.escape(new_label)}</p>
+            <p style="color:#5f706a;font-size:14px;">Se precisar revisar essa alteração, use o fluxo de suporte do painel.</p>
+          </td></tr>
+        </table>
+      </td></tr></table>
+    </body></html>
+    """
+    return text, html_body
+
+
+def admin_suspension_email(name: str, reason: str, automatic: bool = False) -> tuple[str, str]:
+    headline = "Acesso temporariamente suspenso"
+    context = (
+        "O acesso foi suspenso automaticamente após várias tentativas de senha sem sucesso."
+        if automatic
+        else "O acesso administrativo foi temporariamente suspenso."
+    )
+    reason_text = reason.strip() or "Revisão de segurança."
+    text = (
+        f"Portal Wi-Fi - {headline}\n\n"
+        f"Olá, {name}.\n\n{context}\n"
+        f"Motivo: {reason_text}\n\n"
+        "Se você precisa recuperar o acesso, use a opção Solicitar revisão na tela de login."
+    )
+    html_body = f"""
+    <!doctype html><html lang="pt-BR"><body style="margin:0;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#1f2d33;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;"><tr><td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#fff;border:1px solid #dce7e3;border-radius:10px;overflow:hidden;">
+          <tr><td style="background:#7b4b32;color:#fff;padding:22px 24px;"><strong>Portal Wi-Fi</strong><div style="font-size:22px;font-weight:700;margin-top:4px;">{headline}</div></td></tr>
+          <tr><td style="padding:26px 24px;"><h1 style="font-size:20px;">Olá, {html.escape(name)}</h1><p>{html.escape(context)}</p>
+            <p><strong>Motivo:</strong> {html.escape(reason_text)}</p>
+            <p style="color:#5f706a;font-size:14px;">Para pedir uma análise, use <strong>Solicitar revisão</strong> na tela de login.</p>
+          </td></tr>
+        </table>
+      </td></tr></table>
+    </body></html>
+    """
+    return text, html_body
+
+
+def admin_reactivation_request_email(name: str) -> tuple[str, str]:
+    text = (
+        "Portal Wi-Fi - Solicitação recebida\n\n"
+        f"Olá, {name}.\n\n"
+        "Recebemos sua solicitação de revisão de acesso. A equipe responsável analisará o pedido.\n"
+        "Você receberá uma nova mensagem quando houver uma decisão."
+    )
+    html_body = f"""
+    <!doctype html><html lang="pt-BR"><body style="margin:0;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#1f2d33;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;"><tr><td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#fff;border:1px solid #dce7e3;border-radius:10px;overflow:hidden;">
+          <tr><td style="background:#125f78;color:#fff;padding:22px 24px;"><strong>Portal Wi-Fi</strong><div style="font-size:22px;font-weight:700;margin-top:4px;">Solicitação recebida</div></td></tr>
+          <tr><td style="padding:26px 24px;"><h1 style="font-size:20px;">Olá, {html.escape(name)}</h1><p>Recebemos sua solicitação de revisão de acesso.</p><p style="color:#5f706a;font-size:14px;">Você receberá uma nova mensagem quando houver uma decisão.</p></td></tr>
+        </table>
+      </td></tr></table>
+    </body></html>
+    """
+    return text, html_body
+
+
+def admin_reactivation_alert_email(name: str, email: str, message: str) -> tuple[str, str]:
+    safe_message = message.strip() or "Sem mensagem adicional."
+    text = (
+        "Portal Wi-Fi - Nova solicitação de revisão\n\n"
+        f"Usuário: {name}\n"
+        f"E-mail: {email}\n"
+        f"Mensagem: {safe_message}\n\n"
+        "Acesse o painel administrativo para analisar o pedido."
+    )
+    html_body = f"""
+    <!doctype html><html lang="pt-BR"><body style="margin:0;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#1f2d33;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;"><tr><td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#fff;border:1px solid #dce7e3;border-radius:10px;overflow:hidden;">
+          <tr><td style="background:#125f78;color:#fff;padding:22px 24px;"><strong>Portal Wi-Fi</strong><div style="font-size:22px;font-weight:700;margin-top:4px;">Nova solicitação de revisão</div></td></tr>
+          <tr><td style="padding:26px 24px;"><p><strong>Usuário:</strong> {html.escape(name)}</p><p><strong>E-mail:</strong> {html.escape(email)}</p><p><strong>Mensagem:</strong> {html.escape(safe_message)}</p><p style="color:#5f706a;font-size:14px;">Acesse o painel administrativo para analisar o pedido.</p></td></tr>
+        </table>
+      </td></tr></table>
+    </body></html>
+    """
+    return text, html_body
+
+
+def admin_reactivation_result_email(name: str, approved: bool, note: str = "") -> tuple[str, str]:
+    title = "Acesso reativado" if approved else "Revisão concluída"
+    summary = (
+        "Seu acesso administrativo foi reativado. Você já pode entrar novamente no painel."
+        if approved
+        else "A solicitação foi analisada e o acesso permanece temporariamente restrito."
+    )
+    note_text = note.strip()
+    text = f"Portal Wi-Fi - {title}\n\nOlá, {name}.\n\n{summary}\n"
+    if note_text:
+        text += f"Observação: {note_text}\n"
+    html_note = f"<p><strong>Observação:</strong> {html.escape(note_text)}</p>" if note_text else ""
+    html_body = f"""
+    <!doctype html><html lang="pt-BR"><body style="margin:0;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#1f2d33;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;"><tr><td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#fff;border:1px solid #dce7e3;border-radius:10px;overflow:hidden;">
+          <tr><td style="background:#125f78;color:#fff;padding:22px 24px;"><strong>Portal Wi-Fi</strong><div style="font-size:22px;font-weight:700;margin-top:4px;">{title}</div></td></tr>
+          <tr><td style="padding:26px 24px;"><h1 style="font-size:20px;">Olá, {html.escape(name)}</h1><p>{html.escape(summary)}</p>{html_note}</td></tr>
+        </table>
+      </td></tr></table>
+    </body></html>
+    """
+    return text, html_body
