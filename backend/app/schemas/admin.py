@@ -428,5 +428,37 @@ class AllowedSiteResponse(BaseModel):
     allowed: bool = True
 
 
+class AdminRoleUpdateRequest(BaseModel):
+    role: AdminRole
+
+
+class AdminStatusUpdateRequest(BaseModel):
+    active: bool
+    reason: str = Field(default="", max_length=300)
+
+
+class AdminReactivationRequestCreate(BaseModel):
+    email: EmailStr
+    message: str = Field(default="", max_length=500)
+
+
+class AdminReactivationReviewRequest(BaseModel):
+    approved: bool
+    note: str = Field(default="", max_length=500)
+
+
+class AdminReactivationRequestResponse(BaseModel):
+    id: str
+    adminId: str
+    adminName: str
+    adminEmail: EmailStr
+    message: str
+    status: str
+    requestedAt: datetime
+    reviewedAt: datetime | None = None
+    reviewedBy: str = ""
+    resolutionNote: str = ""
+
+
 class AdminSiteAccessUpdateRequest(BaseModel):
     siteIds: list[str] = Field(default_factory=list, max_length=20)
