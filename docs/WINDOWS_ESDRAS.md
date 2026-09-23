@@ -57,7 +57,37 @@ npm.cmd run build
 cd ..
 ```
 
-## 3. Instalar API e Caddy como serviços
+## 3. Atualizações com migração
+
+Quando uma atualização incluir uma nova revisão Alembic, atualize o código e aplique a migração **antes** de reiniciar a API. A revisão `20260923_0007` adiciona suporte a vouchers sem limite e ao controle de renovação da autorização UniFi.
+
+```powershell
+cd C:\Users\RFB_OCR\Captive-portal
+git pull --ff-only
+
+cd .\backend
+$env:PYTHONPATH="$PWD"
+.\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe -m alembic current
+cd ..
+```
+
+Depois compile o frontend e reinicie os serviços na ordem Caddy → API → Caddy:
+
+```powershell
+cd .\frontend
+npm.cmd ci
+npm.cmd run build
+cd ..
+
+Stop-Service CaptivePortalCaddy
+Restart-Service CaptivePortalApi
+Start-Service CaptivePortalCaddy
+```
+
+Aplique a migração antes do restart para evitar que o backend atualizado encontre um schema antigo.
+
+## 4. Instalar API e Caddy como serviços
 
 Abra o PowerShell como Administrador. O script usa WinSW para criar serviços nativos com inicialização automática, reinício em caso de falha e logs rotativos.
 
@@ -83,7 +113,7 @@ C:\ProgramData\CaptivePortal\Logs\api
 C:\ProgramData\CaptivePortal\Logs\caddy
 ```
 
-## 4. Verificação
+## 5. Verificação
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\windows\status.ps1
@@ -102,7 +132,7 @@ curl.exe -i https://portal-system.gabineteitinerante.com.br/health/ready
 
 Todos devem voltar após reiniciar o Windows sem abrir terminal.
 
-## 5. UniFi legado
+## 6. UniFi legado
 
 No modo `legacy`, o backend autentica no Network Server com a conta técnica local e mantém o cookie de sessão. O adaptador usa:
 
@@ -116,7 +146,7 @@ POST /api/s/{site}/cmd/stamgr
 
 A autorização de visitante é confirmada consultando novamente o cliente por alguns segundos antes de considerar a sessão liberada.
 
-## 6. Teste seguro do UniFi
+## 7. Teste seguro do UniFi
 
 Antes de testar um celular, valide a conta técnica sem imprimir cookies, senhas ou payloads de dispositivos:
 
@@ -128,7 +158,7 @@ $env:PYTHONPATH="$PWD\backend"
 
 O resultado deve terminar em `UniFi OK` e mostrar somente contagens por site.
 
-## 7. Hotspot Visitantes-Esdras
+## 8. Hotspot Visitantes-Esdras
 
 O captive portal deve ser aplicado apenas ao SSID público. Para o ambiente atual:
 
@@ -141,7 +171,7 @@ URL criptografada: desativada
 
 O painel administrativo permanece em `portal-system.gabineteitinerante.com.br`.
 
-## 8. Migração do UniFi Network Server da AWS
+## 9. Migração do UniFi Network Server da AWS
 
 Não desligue a instância AWS antes do corte concluído.
 
@@ -159,7 +189,7 @@ Sequência recomendada:
 
 Evite manter dois controladores tentando gerenciar os mesmos APs durante o corte.
 
-## 9. Manutenção
+## 10. Manutenção
 
 A manutenção pode ser global ou específica por unidade. O painel diferencia:
 
